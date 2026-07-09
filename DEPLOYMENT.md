@@ -6,15 +6,28 @@ says exactly what to click.
 
 Total time: ~30-40 minutes, most of it waiting on things to provision.
 
+Want to try it against your real Gmail on your own machine first, before
+deploying anything? See the README's
+[Testing locally against your real Gmail](./README.md#testing-locally-against-your-real-gmail)
+section — you can reuse the Supabase and Google Cloud setup from steps 2-3
+below for that.
+
+**This entire guide can be completed for $0.** Every account below has a
+free tier that comfortably covers personal use, including the Anthropic step
+— which you can skip entirely. Skipping it means Job Tracker classifies your
+email with a free, offline, rule-based classifier instead of Claude (see the
+README's "Free vs. AI-powered classification" section for the tradeoff). You
+can add a Claude key later at any time without losing data.
+
 ---
 
 ## 0. What you'll need accounts for
 
-- **GitHub** — hosts your code, connects to Vercel
-- **Supabase** — free PostgreSQL database
-- **Vercel** — free hosting + cron scheduler
-- **Google Cloud** — OAuth sign-in + Gmail API access
-- **Anthropic** — Claude API key for email classification
+- **GitHub** — hosts your code, connects to Vercel — free
+- **Supabase** — free PostgreSQL database — free
+- **Vercel** — free hosting + cron scheduler — free
+- **Google Cloud** — OAuth sign-in + Gmail API access — free
+- **Anthropic** *(optional)* — Claude API key for higher-accuracy email classification — paid, skip for $0 mode
 
 ---
 
@@ -28,10 +41,11 @@ account if you don't have one — **Sign up**, follow the prompts, verify your
 email).
 
 1.2. Click the **+** icon top-right → **New repository**. Name it
-`job-tracker`, leave it **Private** (recommended, since it will later contain
-references to your API keys in commit history if you're not careful — though
-your actual secrets stay out of git via `.gitignore`), and click **Create
-repository**. Don't initialize with a README (you already have one).
+`job-tracker`. **Public or Private both work fine** — your actual secrets
+(`DATABASE_URL`, API keys, etc.) never enter git; they live only in your
+local `.env` file (gitignored) and in Vercel's Environment Variables. Pick
+whichever visibility you prefer, and click **Create repository**. Don't
+initialize with a README (you already have one).
 
 1.3. On your own machine, in the project folder, run:
 
@@ -115,7 +129,15 @@ then select it from the project dropdown.
 
 ---
 
-## 4. Get an Anthropic API key
+## 4. Get an Anthropic API key (optional — skip for $0 mode)
+
+**Skip this whole section if you want to run Job Tracker for free.** Without
+`ANTHROPIC_API_KEY` set, the app automatically uses a free, built-in,
+offline classifier instead — see the README's "Free vs. AI-powered
+classification" section for what you gain by adding this. You can come back
+and add it later at any time; nothing else needs to change.
+
+If you do want Claude-powered classification:
 
 4.1. Go to [console.anthropic.com](https://console.anthropic.com) and sign
 in / create an account.
@@ -151,8 +173,9 @@ steps above):
 | `NEXTAUTH_SECRET` | run `openssl rand -base64 32` locally (or use any random 32+ character string) |
 | `GOOGLE_CLIENT_ID` | from step 3.5 |
 | `GOOGLE_CLIENT_SECRET` | from step 3.5 |
-| `ANTHROPIC_API_KEY` | from step 4.2 |
+| `ANTHROPIC_API_KEY` | *(optional — omit entirely for $0 mode)* from step 4.2 |
 | `CRON_SECRET` | run `openssl rand -hex 32` (or any random string) |
+| `TOKEN_ENCRYPTION_KEY` | run `openssl rand -base64 32` — encrypts your stored Gmail tokens |
 
 5.6. Click **Deploy**. Wait ~1-2 minutes for the build to finish.
 
@@ -186,20 +209,33 @@ https://your-app.vercel.app/api/auth/callback/google
 
 ## 7. Set up the database schema
 
-Run this from your local machine (it connects to your live Supabase database
-using the `DATABASE_URL` you already have in your local `.env`):
+The repo already includes the initial migration
+(`prisma/migrations/20260709201022_init`). Run this from your local machine
+(it connects to your live Supabase database using the `DATABASE_URL` you
+already have in your local `.env`):
 
 ```bash
 # make sure your local .env has the same DATABASE_URL as Vercel
 npx prisma migrate deploy
 ```
 
-If you haven't created any migrations yet locally, run this instead to push
-the schema directly:
+This creates every table, enum, and foreign key in one shot. (If you ever
+change `prisma/schema.prisma` yourself, generate a new migration with
+`npx prisma migrate dev --name <what-changed>` before deploying again.)
+
+### Optional: load sample data
+
+To try the dashboard and table with realistic-looking sample applications
+before connecting a real Gmail account:
 
 ```bash
-npx prisma db push
+npx prisma db seed
 ```
+
+This creates a demo user (`demo@example.com`) with a year's worth of sample
+applications across every status. Safe to run against any environment — it
+only inserts, and re-running it is idempotent (it upserts the demo user and
+clears only that user's previous sample applications first).
 
 ---
 

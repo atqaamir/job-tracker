@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Table2, Briefcase } from "lucide-react";
+import { LayoutDashboard, Table2, Briefcase, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/dashboard/applications", label: "Applications", icon: Table2 },
+  { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
 export function SidebarNav() {

@@ -48,3 +48,15 @@ export const applicationUpdateSchema = applicationCreateSchema.partial().extend(
 export type ApplicationCreateInput = z.infer<typeof applicationCreateSchema>;
 export type ApplicationCreateFormInput = z.input<typeof applicationCreateSchema>;
 export type ApplicationUpdateInput = z.infer<typeof applicationUpdateSchema>;
+
+export const syncSettingsUpdateSchema = z.object({
+  daysToLookBack: z.coerce
+    .number()
+    .int()
+    .min(7, "Must be at least 7 days")
+    .max(1825, "Must be 5 years (1825 days) or fewer"),
+  gmailQuery: z.string().min(1).max(500),
+  autoSync: z.boolean(),
+});
+
+export type SyncSettingsUpdateInput = z.infer<typeof syncSettingsUpdateSchema>;

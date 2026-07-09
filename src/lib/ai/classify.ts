@@ -1,6 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
+import { EMAIL_CATEGORIES, APPLICATION_STATUSES, EMPLOYMENT_TYPES } from "@/lib/ai/types";
+import type { ClassifyEmailInput, EmailClassification } from "@/lib/ai/types";
+import { classifyEmailHeuristically } from "@/lib/ai/heuristic-classify";
+
+export { EMAIL_CATEGORIES, APPLICATION_STATUSES, EMPLOYMENT_TYPES };
+export type { EmailClassification };
 
 let client: Anthropic | null = null;
 
@@ -10,41 +16,6 @@ function getClient(): Anthropic {
   }
   return client;
 }
-
-export const EMAIL_CATEGORIES = [
-  "APPLICATION_CONFIRMATION",
-  "RECRUITER_OUTREACH",
-  "INTERVIEW_INVITATION",
-  "INTERVIEW_FOLLOWUP",
-  "CODING_ASSESSMENT",
-  "OFFER",
-  "REJECTION",
-  "REQUEST_FOR_INFO",
-  "OTHER",
-] as const;
-
-export const APPLICATION_STATUSES = [
-  "APPLIED",
-  "VIEWED",
-  "RECRUITER_CONTACTED",
-  "ASSESSMENT",
-  "PHONE_SCREEN",
-  "TECHNICAL_INTERVIEW",
-  "FINAL_INTERVIEW",
-  "OFFER",
-  "ACCEPTED",
-  "REJECTED",
-  "WITHDRAWN",
-] as const;
-
-export const EMPLOYMENT_TYPES = [
-  "FULL_TIME",
-  "PART_TIME",
-  "CONTRACT",
-  "INTERNSHIP",
-  "FREELANCE",
-  "REMOTE",
-] as const;
 
 const ClassificationSchema = z.object({
   isJobRelated: z
@@ -83,21 +54,13 @@ const ClassificationSchema = z.object({
   suggestedNextAction: z.string().nullable().describe("A short suggested follow-up action for the recipient, if any."),
 });
 
-export type EmailClassification = z.infer<typeof ClassificationSchema>;
-
 const SYSTEM_PROMPT = `You classify and extract structured data from a single email that matched a job-search related Gmail search. The recipient is a job seeker tracking their applications.
 
 Determine whether the email is genuinely related to a job the recipient applied to or a recruiter contacting them about an opportunity. Marketing newsletters, unrelated personal email, or emails that only mention the word "position"/"opportunity" in an unrelated sense should have isJobRelated=false and category=OTHER.
 
 Extract company and position names as they would naturally appear on a resume (e.g. "Google", "Senior Software Engineer"), not verbatim email subject lines. Only fill fields you are reasonably confident about; use null otherwise. Never fabricate a recruiter name/email that isn't in the email.`;
 
-export async function classifyEmail(input: {
-  subject: string;
-  fromName: string | null;
-  fromEmail: string | null;
-  bodyText: string;
-  receivedAt: Date;
-}): Promise<EmailClassification> {
+async function classifyEmailWithClaude(input: ClassifyEmailInput): Promise<EmailClassification> {
   const anthropic = getClient();
 
   const userContent = `From: ${input.fromName ?? ""} <${input.fromEmail ?? "unknown"}>
@@ -123,4 +86,18 @@ ${input.bodyText.slice(0, 12_000)}`;
   }
 
   return response.parsed_output;
+}
+
+/**
+ * Classifies an email into a job-search category and extracts structured
+ * fields. Uses Claude when ANTHROPIC_API_KEY is configured (more accurate:
+ * true summarization, better company/position/status inference); otherwise
+ * falls back to a free, offline, keyword-based classifier so the app works
+ * at zero cost. See src/lib/ai/heuristic-classify.ts.
+ */
+export async function classifyEmail(input: ClassifyEmailInput): Promise<EmailClassification> {
+  if (process.env.ANTHROPIC_API_KEY) {
+    return classifyEmailWithClaude(input);
+  }
+  return classifyEmailHeuristically(input);
 }
