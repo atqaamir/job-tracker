@@ -1,8 +1,49 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fafafa;
+  --foreground: #18181b;
+
+  --chart-blue: #2a78d6;
+  --chart-aqua: #1baf7a;
+  --chart-yellow: #eda100;
+  --chart-green: #008300;
+  --chart-violet: #4a3aa7;
+  --chart-red: #e34948;
+  --chart-magenta: #e87ba4;
+  --chart-orange: #eb6834;
+
+  --chart-sequential-100: #cde2fb;
+  --chart-sequential-300: #6da7ec;
+  --chart-sequential-500: #256abf;
+
+  --chart-grid: #e1e0d9;
+  --chart-axis: #c3c2b7;
+  --chart-muted: #898781;
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #f4f4f5;
+
+  --chart-blue: #3987e5;
+  --chart-aqua: #199e70;
+  --chart-yellow: #c98500;
+  --chart-green: #008300;
+  --chart-violet: #9085e9;
+  --chart-red: #e66767;
+  --chart-magenta: #d55181;
+  --chart-orange: #d95926;
+
+  --chart-sequential-100: #184f95;
+  --chart-sequential-300: #2a78d6;
+  --chart-sequential-500: #86b6ef;
+
+  --chart-grid: #2c2c2a;
+  --chart-axis: #383835;
+  --chart-muted: #898781;
 }
 
 @theme inline {
@@ -13,14 +54,14 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --background: #0a0a0a;
-    --foreground: #ededed;
+    --foreground: #f4f4f5;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }
