@@ -19,7 +19,15 @@ const ClassificationSchema = z.object({
     .describe(
       "Whether this email relates to a job application the recipient submitted or a recruiter reaching out about a job opportunity for them."
     ),
-  category: z.enum(EMAIL_CATEGORIES),
+  // Observed in production: the model occasionally returns a category with
+  // different casing/whitespace than the exact enum string (structured
+  // outputs don't appear to be perfectly strict on every model), which
+  // otherwise fails validation and falls back to the free classifier for
+  // that email — normalizing before validating recovers those cases.
+  category: z.preprocess(
+    (val) => (typeof val === "string" ? val.trim().toUpperCase() : val),
+    z.enum(EMAIL_CATEGORIES)
+  ),
   company: z.string().nullable(),
   position: z.string().nullable(),
   suggestedStatus: z

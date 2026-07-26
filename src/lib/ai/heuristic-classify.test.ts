@@ -191,6 +191,27 @@ describe("classifyEmailHeuristically", () => {
       expect(result.category).toBe("APPLICATION_CONFIRMATION");
     });
 
+    it("does not classify a plain confirmation's 'taking the time to apply' as an interview follow-up", () => {
+      // Real observed bug: same root cause as the "next steps" one above,
+      // but for the "taking the time" alternative — "Thank you for taking
+      // the time to apply for a position with us" is generic
+      // application-confirmation phrasing, not evidence of any interview.
+      // This one actually corrupted real data: this Jimdo application later
+      // showed up in the dashboard's "Interviews" filter (which matches on
+      // email category history) while its own furthestStage said it never
+      // progressed past Applied — a direct, visible contradiction.
+      const result = classifyEmailHeuristically(
+        email({
+          subject: "Thank you for applying to Jimdo - stay tuned for updates!",
+          fromEmail: "no-reply@ashbyhq.com",
+          fromName: "Jimdo Hiring Team",
+          bodyText:
+            "Hi Atqa, Thank you for taking the time to apply for a position with us. We're thrilled to have your interest and want to confirm that we've received your application. Our team is already rolling up their sleeves to review it, and you can expect our feedback whatever the outcome.",
+        })
+      );
+      expect(result.category).toBe("APPLICATION_CONFIRMATION");
+    });
+
     it("does not classify a LinkedIn 'application sent' notification as an interview follow-up", () => {
       // Same root cause as the Rewire case above: LinkedIn's own "your
       // application was sent" email says "take these next steps for more
