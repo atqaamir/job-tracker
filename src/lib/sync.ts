@@ -176,10 +176,14 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
     const baseAiConfig: AIConfig | null = settings.aiEnabled && apiKey ? { apiKey, model: settings.aiModel } : null;
     const recentCutoff = new Date(Date.now() - aiRecentDays * 86_400_000);
 
-    const messageIds = await listMessageIds(userId, query);
+    // A big backfill can take dozens of sequential Gmail list-pages before
+    // this resolves — report the running count after each page so the
+    // client's progress bar visibly grows during listing instead of sitting
+    // on "starting…" the whole time, then jumping straight to a fixed total.
+    const messageIds = await listMessageIds(userId, query, (scannedSoFar) => {
+      void prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: scannedSoFar } });
+    });
     summary.emailsScanned = messageIds.length;
-    // Report the total right away so a polling client (see /api/sync/status)
-    // can show a progress bar denominator before any message is processed.
     await prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: summary.emailsScanned } });
 
     const existing = await prisma.emailRecord.findMany({

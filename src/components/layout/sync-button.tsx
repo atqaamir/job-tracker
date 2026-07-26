@@ -207,7 +207,11 @@ export function SyncButton() {
             />
           </div>
           <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            {activeLog.emailsScanned > 0 ? `${activeLog.emailsProcessed}/${activeLog.emailsScanned}` : "starting…"}
+            {activeLog.emailsScanned === 0
+              ? "starting…"
+              : activeLog.emailsProcessed === 0
+                ? `scanning… ${activeLog.emailsScanned} found`
+                : `${activeLog.emailsProcessed}/${activeLog.emailsScanned}`}
           </span>
         </div>
       )}

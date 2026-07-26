@@ -73,11 +73,15 @@ export interface GmailMessageSummary {
  * Lists message IDs matching a Gmail search query, following pagination
  * until Gmail reports no more pages. No artificial cap — a large lookback
  * window with many matches will make several requests, but every matching
- * message is returned.
+ * message is returned. A large backfill can take dozens of sequential pages
+ * (100 messages each) before this resolves, so `onPage` lets the caller
+ * report growing progress instead of leaving the UI showing nothing until
+ * the entire list is done.
  */
 export async function listMessageIds(
   userId: string,
-  query: string
+  query: string,
+  onPage?: (scannedSoFar: number) => void
 ): Promise<GmailMessageSummary[]> {
   const gmail = await getGmailClient(userId);
   const results: GmailMessageSummary[] = [];
@@ -96,6 +100,7 @@ export async function listMessageIds(
       }
     }
     pageToken = res.data.nextPageToken ?? undefined;
+    onPage?.(results.length);
   } while (pageToken);
 
   return results;

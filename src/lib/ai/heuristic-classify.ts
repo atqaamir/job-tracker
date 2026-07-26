@@ -33,8 +33,13 @@ const CATEGORY_PATTERNS: { category: Category; pattern: RegExp }[] = [
   },
   {
     category: "INTERVIEW_FOLLOWUP",
+    // "next steps" alone used to qualify — but that phrase shows up in nearly
+    // every application-confirmation email too ("we'll let you know about
+    // next steps"), so a bare match here fired ahead of
+    // APPLICATION_CONFIRMATION below and mislabeled plain confirmations as
+    // interview follow-ups. Only counts now when tied to an actual interview.
     pattern:
-      /\b(thank you for (?:interviewing|taking the time|meeting)|great (?:speaking|meeting) with you|following up (?:on|after) (?:our|your) interview|next steps)\b/i,
+      /\b(thank you for (?:interviewing|taking the time|meeting)|great (?:speaking|meeting) with you|following up (?:on|after) (?:our|your) interview|next steps (?:in|after|following) (?:the |your |our )?interview)\b/i,
   },
   {
     category: "APPLICATION_CONFIRMATION",

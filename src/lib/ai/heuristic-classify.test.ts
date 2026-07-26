@@ -172,6 +172,42 @@ describe("classifyEmailHeuristically", () => {
       expect(result.company).not.toBe("joining our team");
     });
 
+    it("does not classify a plain application confirmation as an interview follow-up", () => {
+      // Real observed bug: INTERVIEW_FOLLOWUP's pattern matched a bare "next
+      // steps", which shows up in almost every application-confirmation
+      // email ("we'll let you know about next steps") — and since
+      // INTERVIEW_FOLLOWUP is checked before APPLICATION_CONFIRMATION, it
+      // won the match even though nothing about this email is interview
+      // related yet.
+      const result = classifyEmailHeuristically(
+        email({
+          subject: "Thank you for your application at Rewire",
+          fromEmail: "e+11kdl67t6t51ope5.rewire@recruitee-email.com",
+          fromName: "Rewire/Data Scientist (m/w/d)",
+          bodyText:
+            "Thank you for applying for the Data Scientist (m/w/d) position at Rewire. We've received your application and will review it carefully. We'll be in touch soon to let you know about the next steps in the process.",
+        })
+      );
+      expect(result.category).toBe("APPLICATION_CONFIRMATION");
+    });
+
+    it("does not classify a LinkedIn 'application sent' notification as an interview follow-up", () => {
+      // Same root cause as the Rewire case above: LinkedIn's own "your
+      // application was sent" email says "take these next steps for more
+      // success" (a call to browse similar job listings), which also hit
+      // the old bare "next steps" match.
+      const result = classifyEmailHeuristically(
+        email({
+          subject: "Atqa, your application was sent to Oliver Bernard",
+          fromEmail: "jobs-noreply@linkedin.com",
+          fromName: "LinkedIn",
+          bodyText:
+            "Your application was sent to Oliver Bernard. Data Scientist, Oliver Bernard, Berlin, Germany (Hybrid). Applied on July 10, 2026. Now, take these next steps for more success. View similar jobs you may be interested in.",
+        })
+      );
+      expect(result.category).not.toBe("INTERVIEW_FOLLOWUP");
+    });
+
     it("does not use a short system-account-shaped from-name as the company", () => {
       // Uses an ATS domain so domain-based extraction is skipped and this
       // actually exercises the from-name fallback.
