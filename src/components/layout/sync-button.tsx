@@ -28,11 +28,39 @@ const POLL_INTERVAL_MS = 1200;
 interface SyncLogStatus {
   id: string;
   status: string;
+  startedAt: string;
   emailsScanned: number;
   emailsProcessed: number;
   applicationsNew: number;
   applicationsUpdated: number;
   error: string | null;
+}
+
+function formatEta(seconds: number): string {
+  if (seconds < 45) return "less than a minute left";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `~${minutes} min left`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  return `~${hours}h ${remMinutes}m left`;
+}
+
+/**
+ * Rough time remaining based on the average pace since the sync started
+ * (elapsed time / messages processed so far, projected across whatever's
+ * left). Deliberately simple — no rolling window — so it's naturally
+ * conservative early on (the scanning phase's time counts against the
+ * average before any message has been processed) and settles down as more
+ * messages go through. No estimate during scanning, since nothing's been
+ * processed yet to derive a rate from.
+ */
+function estimateRemaining(log: SyncLogStatus): string | null {
+  if (log.emailsProcessed === 0 || log.emailsProcessed >= log.emailsScanned) return null;
+  const elapsedMs = Date.now() - new Date(log.startedAt).getTime();
+  const rate = log.emailsProcessed / elapsedMs;
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+  const remainingMs = (log.emailsScanned - log.emailsProcessed) / rate;
+  return formatEta(remainingMs / 1000);
 }
 
 export function SyncButton() {
@@ -195,6 +223,7 @@ export function SyncButton() {
     isRunning && activeLog.emailsScanned > 0
       ? Math.min(100, Math.round((activeLog.emailsProcessed / activeLog.emailsScanned) * 100))
       : null;
+  const eta = isRunning ? estimateRemaining(activeLog) : null;
 
   return (
     <div className="flex items-center gap-3">
@@ -211,7 +240,7 @@ export function SyncButton() {
               ? "starting…"
               : activeLog.emailsProcessed === 0
                 ? `scanning… ${activeLog.emailsScanned} found`
-                : `${activeLog.emailsProcessed}/${activeLog.emailsScanned}`}
+                : `${activeLog.emailsProcessed}/${activeLog.emailsScanned}${eta ? ` · ${eta}` : ""}`}
           </span>
         </div>
       )}

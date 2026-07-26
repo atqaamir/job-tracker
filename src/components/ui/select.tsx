@@ -51,6 +51,29 @@ export function SelectContent({
   );
 }
 
+export const SelectGroup = SelectPrimitive.Group;
+
+export function SelectLabel({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof SelectPrimitive.Label>) {
+  return (
+    <SelectPrimitive.Label
+      className={cn("px-7 pb-1 pt-2 text-xs font-medium text-zinc-400 dark:text-zinc-500", className)}
+      {...props}
+    />
+  );
+}
+
+export function SelectSeparator({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof SelectPrimitive.Separator>) {
+  return (
+    <SelectPrimitive.Separator className={cn("my-1 h-px bg-zinc-200 dark:bg-zinc-800", className)} {...props} />
+  );
+}
+
 export function SelectItem({
   className,
   children,

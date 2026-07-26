@@ -244,6 +244,60 @@ describe("classifyEmailHeuristically", () => {
       expect(result.isJobRelated).toBe(false);
     });
 
+    it("does not classify an interview-process overview as an actual interview invitation", () => {
+      // Real observed bug: a post-application "here's what our process
+      // looks like" email names future, hypothetical stages generically
+      // ("Interview with Talent Acquisition") — the bare phrase "Interview
+      // with" trips INTERVIEW_INVITATION's pattern even though nothing has
+      // actually been scheduled yet.
+      const result = classifyEmailHeuristically(
+        email({
+          subject: "Your application for Senior Software Engineer / AI Enabler (m/f/d) at AutoScout24",
+          fromEmail: "no-reply@us.greenhouse-mail.io",
+          fromName: "AutoScout24",
+          bodyText:
+            "Thank you for your interest in AutoScout24! We appreciate the time you took to apply to this role, and look forward to reviewing your application. " +
+            "Below you may find all stages of your interviewing process after we review your application and what to expect in which one: " +
+            "30-minute Initial Interview with Talent Acquisition. This session will be a brief review of your background. " +
+            "45-minute Values Discussion. Tech Deep Dive Interviews.",
+        })
+      );
+      expect(result.category).not.toBe("INTERVIEW_INVITATION");
+    });
+
+    it("extracts the position from 'interest in the X position' phrasing", () => {
+      // None of the other POSITION_PATTERNS covered this common ATS
+      // confirmation phrasing — they all require "application for X" or
+      // "position of X", not "interest in X position".
+      const result = classifyEmailHeuristically(
+        email({
+          subject: "Your application to Acme",
+          fromEmail: "careers@acme.com",
+          bodyText: "Thank you so much for your interest in the Data Engineer (m/f/d) position. We have received your application.",
+        })
+      );
+      expect(result.position).toBe("Data Engineer (m/f/d)");
+    });
+
+    it("classifies a confirmation with the job title between 'application' and 'received' correctly", () => {
+      // Real observed bug: "application (?:has been )?received" requires the
+      // two words adjacent, but NVIDIA's confirmation puts the role name in
+      // between — the match failed entirely, and the email fell through to
+      // RECRUITER_OUTREACH because it also mentions "open position" later.
+      const result = classifyEmailHeuristically(
+        email({
+          subject: "Application Received",
+          fromEmail: "no-reply@nvidia.com",
+          fromName: "NVIDIA Recruiting",
+          bodyText:
+            "We want to confirm that your application for the JR2019145 Senior Software Engineer, Applied AI role has been received. " +
+            "We will review your application against the open position, and contact you to arrange an interview if the role is a good match for your qualifications. " +
+            "Thanks again for your interest in NVIDIA.",
+        })
+      );
+      expect(result.category).toBe("APPLICATION_CONFIRMATION");
+    });
+
     it("does not use a short system-account-shaped from-name as the company", () => {
       // Uses an ATS domain so domain-based extraction is skipped and this
       // actually exercises the from-name fallback.

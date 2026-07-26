@@ -16,22 +16,6 @@ export const APPLICATION_STATUS_VALUES = [
   "GHOSTED",
 ] as const;
 
-// Non-terminal stages — the possible values of `furthestStage`. Excludes
-// DRAFT (never a meaningful "furthest" point) and the terminal outcomes
-// (REJECTED/WITHDRAWN/GHOSTED), which represent how an application ended,
-// not progress reached.
-export const PROGRESS_STAGE_VALUES = [
-  "APPLIED",
-  "VIEWED",
-  "RECRUITER_CONTACTED",
-  "ASSESSMENT",
-  "PHONE_SCREEN",
-  "TECHNICAL_INTERVIEW",
-  "FINAL_INTERVIEW",
-  "OFFER",
-  "ACCEPTED",
-] as const;
-
 // Kept intentionally small — these are the models classify.ts knows how to
 // call correctly (each needs different request params; see classify.ts).
 export const AI_MODEL_VALUES = ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5"] as const;

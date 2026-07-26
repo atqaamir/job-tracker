@@ -47,8 +47,14 @@ const CATEGORY_PATTERNS: { category: Category; pattern: RegExp }[] = [
   },
   {
     category: "APPLICATION_CONFIRMATION",
+    // "application (?:has been )?received" requires the two words to sit
+    // right next to each other — real confirmations routinely put the job
+    // title in between ("your application for the Senior Software Engineer
+    // role has been received"), which fell through to no match at all and
+    // let a later, looser category (e.g. RECRUITER_OUTREACH's "open
+    // position") win instead. The extra alternatives cover that gap.
     pattern:
-      /\b(thank you for applying|application (?:has been )?received|we(?:'| ha)ve received your application|received your resume|application confirmation)\b/i,
+      /\b(thank you for applying|application (?:has been )?received|we(?:'| ha)ve received your application|received your resume|application confirmation|want to confirm (?:that )?your application|application for (?:the )?.{0,100}?has been received)\b/i,
   },
   {
     category: "REQUEST_FOR_INFO",
@@ -135,8 +141,18 @@ const MARKETING_FOOTER_PATTERN =
 const JOB_DIGEST_PATTERN =
   /\b(jobs? you may be interested in|new jobs? (?:match|matching|posted|available)|jobs? recommended for you|jobs? matching your (?:search|profile|preferences)|\bjob alert\b)\b/i;
 
+// A "here's what our interview process looks like" roadmap sent right after
+// applying names *future, hypothetical* stages generically ("Interview with
+// Talent Acquisition", "Values Discussion") — it isn't inviting the
+// recipient to an actual interview yet. Without this guard, a stage name
+// containing "Interview with"/"Interview for" trips the real
+// INTERVIEW_INVITATION pattern below even though nothing has been scheduled.
+const PROCESS_OVERVIEW_PATTERN =
+  /\b(stages? of (?:your|the) (?:interview|hiring|interviewing) process|what to expect (?:in|during) (?:each|which|the)|our interview process (?:looks like|consists of))\b/i;
+
 function detectCategory(text: string): Category {
   if (MARKETING_FOOTER_PATTERN.test(text) || JOB_DIGEST_PATTERN.test(text)) return "OTHER";
+  if (PROCESS_OVERVIEW_PATTERN.test(text)) return "APPLICATION_CONFIRMATION";
   for (const { category, pattern } of CATEGORY_PATTERNS) {
     if (pattern.test(text)) return category;
   }
@@ -256,6 +272,11 @@ function extractCompany(fromName: string | null, fromEmail: string | null, subje
 const POSITION_PATTERNS = [
   /for the (?:role|position) of ([^,.\n]{2,80})/i,
   /application for (?:the )?([^,.\n]{2,80}?)(?: at | position| role|$)/i,
+  // "Thank you for your interest in the Data Engineer (m/f/d) position" —
+  // common ATS confirmation phrasing that none of the other patterns cover
+  // (they all require "application for X" or "position of X", not "interest
+  // in X position").
+  /interest in (?:the )?([^,.\n]{2,80}?)\s+(?:position|role)\b/i,
   // Reply-subject style ("Re: Backend Engineer position") — anchored to the
   // start and requires the colon, so it can't match "re" inside an
   // unrelated word like "review" or "requirements" mid-text.

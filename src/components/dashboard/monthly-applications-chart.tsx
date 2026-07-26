@@ -22,7 +22,7 @@ export function MonthlyApplicationsChart({ data }: Props) {
 
   return (
     <ResponsiveContainer width="100%" height={240}>
-      <BarChart data={chartData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }} barCategoryGap="30%">
+      <BarChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="30%">
         <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
         <XAxis
           dataKey="label"

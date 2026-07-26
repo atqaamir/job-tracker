@@ -6,7 +6,16 @@ import { ArrowUpDown, Download, Mail, MoreHorizontal, Pencil, Plus, Trash2, Uplo
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,7 +25,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApplicationFormDialog } from "@/components/applications/application-form-dialog";
 import { STATUS_LABELS, STATUS_COLORS, formatCurrency, formatDate, relativeTime, cn } from "@/lib/utils";
-import { APPLICATION_STATUS_VALUES, PROGRESS_STAGE_VALUES } from "@/lib/validation";
+import { APPLICATION_STATUS_VALUES } from "@/lib/validation";
 import type { JobApplicationDTO, PaginationInfo } from "@/types/application";
 
 const PAGE_SIZE = 20;
@@ -48,8 +57,12 @@ export function ApplicationsTable() {
   const [pagination, setPagination] = React.useState<PaginationInfo | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [search, setSearch] = React.useState("");
-  const [status, setStatus] = React.useState<string>("all");
-  const [furthestStage, setFurthestStage] = React.useState<string>("all");
+  // Either "all", a raw ApplicationStatus ("REJECTED"), or a furthest-stage
+  // bucket prefixed with "stage:" ("stage:INTERVIEWED", "stage:PHONE_SCREEN")
+  // — see the merged Select below. Kept as one value so the two concepts
+  // (current status vs. the furthest stage ever reached) render as one
+  // dropdown instead of two easily-confused side-by-side filters.
+  const [statusFilter, setStatusFilter] = React.useState<string>("all");
   const [range, setRange] = React.useState<string>("all");
   const [archived, setArchived] = React.useState(false);
   const [page, setPage] = React.useState(1);
@@ -93,8 +106,11 @@ export function ApplicationsTable() {
       params.set("dashboardFilter", dashboardFilter);
       if (sinceDays) params.set("sinceDays", sinceDays);
     } else {
-      if (status !== "all") params.set("status", status);
-      if (furthestStage !== "all") params.set("furthestStage", furthestStage);
+      if (statusFilter.startsWith("stage:")) {
+        params.set("furthestStage", statusFilter.slice("stage:".length));
+      } else if (statusFilter !== "all") {
+        params.set("status", statusFilter);
+      }
       if (range !== "all") params.set("sinceDays", range);
     }
 
@@ -106,7 +122,7 @@ export function ApplicationsTable() {
     } finally {
       setLoading(false);
     }
-  }, [page, sortBy, sortDir, archived, search, status, furthestStage, range, dashboardFilter, sinceDays]);
+  }, [page, sortBy, sortDir, archived, search, statusFilter, range, dashboardFilter, sinceDays]);
 
   React.useEffect(() => {
     const timeout = setTimeout(load, 250);
@@ -180,43 +196,39 @@ export function ApplicationsTable() {
             className="w-64"
           />
           <Select
-            value={status}
+            value={statusFilter}
             onValueChange={(v) => {
               setPage(1);
-              setStatus(v);
+              setStatusFilter(v);
             }}
             disabled={Boolean(dashboardFilter)}
           >
-            <SelectTrigger className="w-48">
+            <SelectTrigger className="w-52">
               <SelectValue placeholder="All statuses" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
-              {APPLICATION_STATUS_VALUES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {STATUS_LABELS[s]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={furthestStage}
-            onValueChange={(v) => {
-              setPage(1);
-              setFurthestStage(v);
-            }}
-            disabled={Boolean(dashboardFilter)}
-          >
-            <SelectTrigger className="w-56">
-              <SelectValue placeholder="Any stage reached" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Any stage reached</SelectItem>
-              {PROGRESS_STAGE_VALUES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  Reached: {STATUS_LABELS[s]}
-                </SelectItem>
-              ))}
+              <SelectItem value="NOT_REJECTED">All but Rejected</SelectItem>
+              <SelectGroup>
+                <SelectLabel>Current status</SelectLabel>
+                {APPLICATION_STATUS_VALUES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {STATUS_LABELS[s]}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+              <SelectSeparator />
+              <SelectGroup>
+                {/* Furthest stage ever reached, independent of current status —
+                    e.g. finds "interviewed" applications even after they were
+                    later rejected, which Status alone can't show since it only
+                    reflects the current/final state. */}
+                <SelectLabel>Past status (ever reached, even if since rejected)</SelectLabel>
+                <SelectItem value="stage:INTERVIEWED">Interviewed — any stage</SelectItem>
+                <SelectItem value="stage:PHONE_SCREEN">Interviewed — Phone Screen</SelectItem>
+                <SelectItem value="stage:TECHNICAL_INTERVIEW">Interviewed — Technical Interview</SelectItem>
+                <SelectItem value="stage:FINAL_INTERVIEW">Interviewed — Final Interview</SelectItem>
+              </SelectGroup>
             </SelectContent>
           </Select>
           <Select

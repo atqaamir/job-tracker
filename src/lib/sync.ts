@@ -8,6 +8,11 @@ import type { ApplicationStatus, EmailCategory, EmploymentType } from "@/generat
 const DEFAULT_QUERY =
   "job OR application OR interview OR offer OR rejection OR recruiter OR position OR opportunity";
 const STALE_DAYS = 14;
+// An application still sitting at "Applied" (never even a recruiter reply,
+// let alone an interview) this long after applying is presumed ghosted —
+// GHOSTED is otherwise never set automatically (see isProgressStage/
+// STATUS_BY_CATEGORY in ai/heuristic-classify.ts), only manually by the user.
+const GHOSTED_MONTHS = 4;
 
 // Ranks the non-terminal stages of an application so furthestStage can track
 // the high-water mark reached, even after `status` later moves to a terminal
@@ -164,12 +169,6 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
         : new Date(Date.now() - FIRST_TIME_LOOKBACK_DAYS * 86_400_000);
     }
 
-    const afterEpoch = Math.floor(since.getTime() / 1000);
-    // category:primary excludes Gmail's Promotions/Social/Updates/Forums
-    // tabs — job-application emails always land in Primary, and this cuts
-    // out a lot of noise regardless of what the user's custom query says.
-    const query = `${settings.gmailQuery} after:${afterEpoch} category:primary`;
-
     // A per-user key (encrypted at rest) takes precedence over the
     // server's ANTHROPIC_API_KEY, so each account can bring its own key.
     const apiKey = settings.anthropicApiKey ? decrypt(settings.anthropicApiKey) : (process.env.ANTHROPIC_API_KEY ?? null);
@@ -186,42 +185,23 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
       return cancelled;
     };
 
-    // A big backfill can take dozens of sequential Gmail list-pages before
-    // this resolves — report the running count after each page so the
-    // client's progress bar visibly grows during listing instead of sitting
-    // on "starting…" the whole time, then jumping straight to a fixed total.
-    // Cancellation is checked here too (not just in the per-message loop
-    // below), since a large backfill can spend a long time just paginating
-    // before that loop ever starts.
-    const messageIds = await listMessageIds(
-      userId,
-      query,
-      (scannedSoFar) => {
-        void prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: scannedSoFar } });
-      },
-      checkCancelled
-    );
-    summary.emailsScanned = messageIds.length;
-    await prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: summary.emailsScanned } });
+    // Fetched and processed in descending weekly windows (today back to
+    // `since`) rather than one query covering the whole range — Gmail search
+    // ordering isn't reliable enough to depend on for "newest first," so
+    // this guarantees it structurally: the newest window is always fully
+    // processed before an older one starts, so a large backfill shows
+    // today's applications right away instead of only after grinding
+    // through a year of old mail first.
+    const WINDOW_DAYS = 7;
+    const windows: { start: Date; end: Date }[] = [];
+    let windowEnd = new Date();
+    while (windowEnd > since) {
+      const windowStart = new Date(Math.max(since.getTime(), windowEnd.getTime() - WINDOW_DAYS * 86_400_000));
+      windows.push({ start: windowStart, end: windowEnd });
+      windowEnd = windowStart;
+    }
 
-    const toProcess = cancelled
-      ? []
-      : await (async () => {
-          const existing = await prisma.emailRecord.findMany({
-            where: { gmailMessageId: { in: messageIds.map((m) => m.id) } },
-            select: { gmailMessageId: true },
-          });
-          const existingIds = new Set(existing.map((e) => e.gmailMessageId));
-          return messageIds.filter((m) => !existingIds.has(m.id));
-        })();
-
-    for (const { id: messageId, threadId } of toProcess) {
-      // Cheap poll relative to the Gmail fetch + classification call this
-      // iteration is about to make. Checked once per message so a cancel
-      // request (POST /api/sync/cancel) takes effect within one message.
-      if (await checkCancelled()) {
-        break;
-      }
+    async function processMessage(messageId: string, threadId: string) {
       try {
         const message = await getMessage(userId, messageId);
         // Only messages within the last aiRecentDays get AI — everything
@@ -247,7 +227,7 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
         });
 
         if (!classification.isJobRelated) {
-          continue;
+          return;
         }
 
         let application = await findMatchingApplication(userId, threadId, classification);
@@ -390,6 +370,54 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
       }
     }
 
+    windowLoop: for (const window of windows) {
+      if (await checkCancelled()) break;
+
+      const afterEpoch = Math.floor(window.start.getTime() / 1000);
+      const beforeEpoch = Math.ceil(window.end.getTime() / 1000);
+      // category:primary excludes Gmail's Promotions/Social/Updates/Forums
+      // tabs — job-application emails always land in Primary, and this cuts
+      // out a lot of noise regardless of what the user's custom query says.
+      const windowQuery = `${settings.gmailQuery} after:${afterEpoch} before:${beforeEpoch} category:primary`;
+
+      // A big backfill can take dozens of sequential Gmail list-pages before
+      // this resolves — report the running count after each page so the
+      // client's progress bar visibly grows during listing instead of
+      // sitting on "starting…" the whole time.
+      const windowMessageIds = await listMessageIds(
+        userId,
+        windowQuery,
+        (scannedSoFar) => {
+          void prisma.syncLog.update({
+            where: { id: syncLog.id },
+            data: { emailsScanned: summary.emailsScanned + scannedSoFar },
+          });
+        },
+        checkCancelled
+      );
+      summary.emailsScanned += windowMessageIds.length;
+      await prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: summary.emailsScanned } });
+
+      if (cancelled) break;
+
+      const existing = await prisma.emailRecord.findMany({
+        where: { gmailMessageId: { in: windowMessageIds.map((m) => m.id) } },
+        select: { gmailMessageId: true },
+      });
+      const existingIds = new Set(existing.map((e) => e.gmailMessageId));
+      const toProcess = windowMessageIds.filter((m) => !existingIds.has(m.id));
+
+      for (const { id: messageId, threadId } of toProcess) {
+        // Cheap poll relative to the Gmail fetch + classification call this
+        // iteration is about to make. Checked once per message so a cancel
+        // request (POST /api/sync/cancel) takes effect within one message.
+        if (await checkCancelled()) {
+          break windowLoop;
+        }
+        await processMessage(messageId, threadId);
+      }
+    }
+
     // A cancelled run stops here: lastSyncAt is deliberately left untouched
     // (or, for fullBackfill, left null from clearFetchedData's wipe) so the
     // next sync's `since` cursor still covers whatever this run didn't get
@@ -430,6 +458,27 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
         : STALE_DAYS,
     }));
 
+    // Applied, no response, and it's been months — mark it ghosted. Scoped
+    // tightly: current status must still literally be APPLIED and
+    // furthestStage must never have advanced past it, so this only fires on
+    // genuine silence, never on an application that got a reply but simply
+    // hasn't moved to a terminal state yet.
+    const ghostedThreshold = new Date();
+    ghostedThreshold.setMonth(ghostedThreshold.getMonth() - GHOSTED_MONTHS);
+    await prisma.jobApplication.updateMany({
+      where: {
+        userId,
+        isArchived: false,
+        status: "APPLIED",
+        // `furthestStage: { in: [null, "APPLIED"] }` would silently exclude
+        // the null rows — SQL's `IN (NULL)` never matches, even for NULL
+        // values — so null and "APPLIED" need to be checked separately.
+        OR: [{ furthestStage: null }, { furthestStage: "APPLIED" }],
+        dateApplied: { lt: ghostedThreshold },
+      },
+      data: { status: "GHOSTED" },
+    });
+
     await prisma.syncSettings.update({
       where: { userId },
       data: { lastSyncAt: new Date() },
@@ -467,7 +516,7 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
 async function findMatchingApplication(
   userId: string,
   threadId: string,
-  classification: { company: string | null; position: string | null }
+  classification: { category: EmailCategory | string; company: string | null; position: string | null }
 ) {
   const byThread = await prisma.emailRecord.findFirst({
     where: { gmailThreadId: threadId, application: { userId } },
@@ -487,13 +536,33 @@ async function findMatchingApplication(
   // vs. a recruiter's personal reply vs. an ATS no-reply address).
   const normCompany = normalizeCompanyKey(classification.company);
   const normPosition = classification.position ? normalize(classification.position) : null;
+  const sameCompany = candidates.filter((c) => normalizeCompanyKey(c.company) === normCompany);
+  if (sameCompany.length === 0) return null;
 
-  const exact = candidates.find(
-    (c) => normalizeCompanyKey(c.company) === normCompany && (!normPosition || normalize(c.position) === normPosition)
+  if (normPosition) {
+    // The position was confidently extracted and doesn't match any existing
+    // application at this company — a distinct application (a second, later
+    // role at a company you already applied to before), not an update to an
+    // unrelated one. Forcing a company-only merge here used to silently
+    // carry over the wrong application's status/furthestStage.
+    return sameCompany.find((c) => normalize(c.position) === normPosition) ?? null;
+  }
+
+  // No position on this email — common for generic confirmations/follow-ups
+  // that don't repeat the job title — so company is the only signal left.
+  // But a fresh "thank you for applying" confirmation for a company you've
+  // already progressed with elsewhere (interviewed, assessed, offered) is
+  // itself evidence this is a *new*, separate application, not an update to
+  // the old one — merging it would silently inherit the old application's
+  // already-advanced furthestStage (e.g. showing "Interviewed" for an
+  // application whose only email ever was a plain confirmation).
+  const isFreshConfirmation = classification.category === "APPLICATION_CONFIRMATION";
+  return (
+    sameCompany.find(
+      (c) =>
+        !(isFreshConfirmation && isProgressStage(c.furthestStage as ApplicationStatus | null) && c.furthestStage !== "APPLIED")
+    ) ?? null
   );
-  if (exact) return exact;
-
-  return candidates.find((c) => normalizeCompanyKey(c.company) === normCompany) ?? null;
 }
 
 async function createNotification(userId: string, type: string, title: string, applicationId: string) {

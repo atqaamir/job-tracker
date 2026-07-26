@@ -49,6 +49,7 @@ export async function GET(request: NextRequest) {
       log: {
         id: log.id,
         status: log.status,
+        startedAt: log.startedAt,
         emailsScanned: log.emailsScanned,
         emailsProcessed: log.emailsProcessed,
         applicationsNew: log.applicationsNew,

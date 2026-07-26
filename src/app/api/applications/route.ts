@@ -56,11 +56,20 @@ export async function GET(request: NextRequest) {
       : { userId, isArchived: archived, ...(since ? { dateApplied: { gte: since } } : {}) };
 
     if (!dashboardFilter && status) {
-      where.status = status as Prisma.JobApplicationWhereInput["status"];
+      // "NOT_REJECTED" is a synthetic bucket (Applications page's "All but
+      // Rejected" option), not a real ApplicationStatus value.
+      where.status =
+        status === "NOT_REJECTED" ? { not: "REJECTED" } : (status as Prisma.JobApplicationWhereInput["status"]);
     }
 
     if (!dashboardFilter && furthestStage) {
-      where.furthestStage = furthestStage as Prisma.JobApplicationWhereInput["furthestStage"];
+      // "INTERVIEWED" is a synthetic bucket (Applications page's merged
+      // Status filter) covering all three interview stages, not a real
+      // ApplicationStatus value.
+      where.furthestStage =
+        furthestStage === "INTERVIEWED"
+          ? { in: ["PHONE_SCREEN", "TECHNICAL_INTERVIEW", "FINAL_INTERVIEW"] }
+          : (furthestStage as Prisma.JobApplicationWhereInput["furthestStage"]);
     }
 
     if (search) {
