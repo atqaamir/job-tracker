@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
 
   for (const { userId } of settingsList) {
     try {
-      await runSync(userId);
+      await runSync(userId, { createNotifications: true });
       results.push({ userId, ok: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";

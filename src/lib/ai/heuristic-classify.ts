@@ -71,6 +71,24 @@ const ATS_DOMAINS = [
 
 const GENERIC_EMAIL_DOMAINS = ["gmail.com", "outlook.com", "yahoo.com", "hotmail.com", "icloud.com", "aol.com"];
 
+// The ATS platform's own name leaking through as "the company" (e.g. a
+// SuccessFactors-hosted customer's system account is literally named
+// "SuccessFactors") — reject it from every extraction path, not just the
+// domain check.
+const ATS_PLATFORM_NAMES = new Set(ATS_DOMAINS.map((d) => d.split(".")[0].toLowerCase()));
+
+// A small set of two-part TLDs where the registrable domain is the label
+// *before* these two segments, not immediately before the last one — e.g.
+// "acme.co.uk" is Acme, not "co". Not exhaustive; covers the common cases.
+const TWO_PART_TLDS = new Set(["co.uk", "com.au", "co.in", "com.br", "co.nz", "co.jp", "com.sg"]);
+
+// Common two/three-letter regional or functional subdomains that show up in
+// front of a company's real domain (e.g. "eu.acme.com", "jobs.acme.com").
+// The original prefix-strip only covered a handful of these; anything
+// unrecognized fell through and got extracted as if it were the company.
+const KNOWN_SUBDOMAIN_PREFIXES =
+  /^(mail\d?|careers?|jobs?|no-?reply|notifications?|hr|talent|recruiting|apply|applications?|e|eu|us|na|uk|apac|emea|amer)$/i;
+
 const NEXT_ACTION_BY_CATEGORY: Partial<Record<Category, string>> = {
   INTERVIEW_INVITATION: "Respond to schedule your interview",
   CODING_ASSESSMENT: "Complete the assessment before the deadline",
@@ -95,37 +113,134 @@ function detectCategory(text: string): Category {
   return "OTHER";
 }
 
-function extractCompany(fromName: string | null, fromEmail: string | null, subject: string): string | null {
+// Marks that a two-word from-name is a company ("Acme Careers", "Acme
+// Recruiting"), not a person — used to keep the personal-name filter below
+// from rejecting these.
+const COMPANY_MARKER =
+  /\b(inc|incorporated|llc|ltd|corp|corporation|co|company|group|team|talent|careers?|recruiting|recruitment|hr|technologies|tech|labs|systems|solutions|partners|holdings|ventures|studio|studios)\b/i;
+
+/** True for from-names shaped like "Jane Doe" — a person, not a company. */
+function looksLikePersonalName(name: string): boolean {
+  if (COMPANY_MARKER.test(name)) return false;
+  const words = name.trim().split(/\s+/);
+  return words.length === 2 && words.every((w) => /^[A-Z][a-z'.-]+$/.test(w));
+}
+
+/**
+ * Final gate every extracted company candidate goes through, regardless of
+ * which method produced it (domain label, subject/body regex, from-name
+ * fallback). Regex character classes like `[A-Z]` stop enforcing case once
+ * the pattern carries an `/i` flag (JS applies `i` to the whole pattern,
+ * including character classes) — so "capitalized" candidates from those
+ * patterns weren't actually guaranteed to be. Checking real capitalization
+ * here, in code, is what actually rejects lowercase phrase fragments like
+ * "the team" or "joining our team".
+ */
+// Generic system-account words that show up glued onto an ATS/platform name
+// in auto-generated sender display names ("Recruitee-email", "Greenhouse
+// Notifications") — checked as a substring since these compound directly
+// with a platform or generic word rather than appearing as their own token.
+const SYSTEM_ACCOUNT_WORD = /(email|notification|system|noreply|donotreply|mailer|no-reply)/i;
+
+function isPlausibleCompanyName(candidate: string): boolean {
+  const trimmed = candidate.trim();
+  const lower = trimmed.toLowerCase();
+  if (trimmed.length <= 3) return false;
+  if (!/^[A-Z]/.test(trimmed)) return false;
+  if (SYSTEM_ACCOUNT_WORD.test(lower)) return false;
+  // Substring, not just exact match — catches "Recruitee-email" or
+  // "Greenhouse Careers" compounding the platform name with something else,
+  // not just the bare platform name on its own.
+  if ([...ATS_PLATFORM_NAMES].some((platform) => lower.includes(platform))) return false;
+  if (looksLikePersonalName(trimmed)) return false;
+  return true;
+}
+
+const COMPANY_PATTERNS = [
+  /application (?:to|at|with)\s+([A-Z][\w&.\-\s]{1,40}?)(?:[!.,]|\s*[-–]|\s*$)/i,
+  /applying to\s+([A-Z][\w&.\-\s]{1,40}?)(?:[!.,]|\s*[-–]|\s*$)/i,
+  /interest in\s+([A-Z][\w&.\-\s]{1,40}?)(?:[!.,]|\s*[-–]|\s*$)/i,
+  /update from\s+([A-Z][\w&.\-\s]{1,40}?)(?:[!.,]|\s*[-–]|\s*$)/i,
+  /^([A-Z][\w&.\-\s]{1,40}?)\s+(?:careers|recruiting|talent acquisition|talent team|hiring team)\b/im,
+  /(?:at|from|with)\s+([A-Z][\w&.\-\s]{1,40}?)(?:[!.,]|\s*[-–]|\s*$)/,
+];
+
+/**
+ * The registrable-domain label to use as a company name — the segment right
+ * before the TLD, not necessarily the first label. "eu.acme.com" is Acme,
+ * not "eu"; "acme.co.uk" is Acme, not "co". Falls back to the first label
+ * when there's nothing better to go on (a bare two-part domain).
+ */
+function domainCompanyLabel(domain: string): string | null {
+  const parts = domain.split(".");
+  if (parts.length < 2) return null;
+
+  const lastTwo = parts.slice(-2).join(".");
+  const labelIndex = TWO_PART_TLDS.has(lastTwo) ? parts.length - 3 : parts.length - 2;
+  if (labelIndex < 0) return null;
+
+  // Walk backward past any recognized subdomain prefixes (mail, careers,
+  // jobs, regional codes, ...) in case the registrable-domain guess above
+  // still landed on one, e.g. "notifications.mail.acme.com".
+  let idx = labelIndex;
+  while (idx > 0 && KNOWN_SUBDOMAIN_PREFIXES.test(parts[idx])) idx--;
+
+  const label = parts[idx];
+  return label && label.length > 1 ? label : null;
+}
+
+function extractCompany(fromName: string | null, fromEmail: string | null, subject: string, body: string): string | null {
   const domain = fromEmail?.split("@")[1]?.toLowerCase() ?? null;
 
   if (domain && !ATS_DOMAINS.some((ats) => domain.endsWith(ats)) && !GENERIC_EMAIL_DOMAINS.includes(domain)) {
-    const label = domain
-      .replace(/^(mail|careers|jobs|no-?reply|notifications?|hr|talent)\./, "")
-      .split(".")[0];
-    if (label && label.length > 1) {
-      return label.charAt(0).toUpperCase() + label.slice(1);
+    const label = domainCompanyLabel(domain);
+    if (label) {
+      const candidate = label.charAt(0).toUpperCase() + label.slice(1);
+      if (isPlausibleCompanyName(candidate)) return candidate;
     }
   }
 
-  const subjectMatch = subject.match(/(?:at|from|with)\s+([A-Z][\w&.\-\s]{1,40}?)(?:[!.,]|\s*[-–]|\s*$)/);
-  if (subjectMatch) return subjectMatch[1].trim();
+  // Subject first, then the opening of the body — ATS emails routinely name
+  // the company in the first line even when the subject doesn't
+  // ("Thank you for your interest in Acme!").
+  for (const text of [subject, body.slice(0, 1000)]) {
+    for (const pattern of COMPANY_PATTERNS) {
+      const match = text.match(pattern);
+      if (match && isPlausibleCompanyName(match[1])) return match[1].trim();
+    }
+  }
 
-  if (fromName && !/no-?reply|notifications?|recruiting team|talent acquisition/i.test(fromName)) {
-    return fromName.trim();
+  // Last resort: the sender's display name. isPlausibleCompanyName rejects
+  // anything too short to be meaningful (likely initials, e.g. "JD"),
+  // shaped like a person's name ("Jane Doe"), or the ATS platform's own
+  // name leaking through ("SuccessFactors") — a wrong company name is worse
+  // than none, since it blocks matching this email to the right application.
+  if (fromName && !/no-?reply|do-?not-?reply|notifications?|recruiting team|talent acquisition/i.test(fromName)) {
+    const trimmed = fromName.trim();
+    if (isPlausibleCompanyName(trimmed)) return trimmed;
   }
 
   return null;
 }
 
-function extractPosition(subject: string): string | null {
-  const patterns = [
-    /for the (?:role|position) of ([^,.\n]{2,80})/i,
-    /application for (?:the )?([^,.\n]{2,80}?)(?: at | position| role|$)/i,
-    /re:?\s*([^,\-\n]{3,60})\s*(?:position|role|opening)/i,
-  ];
-  for (const pattern of patterns) {
-    const match = subject.match(pattern);
-    if (match) return match[1].trim();
+const POSITION_PATTERNS = [
+  /for the (?:role|position) of ([^,.\n]{2,80})/i,
+  /application for (?:the )?([^,.\n]{2,80}?)(?: at | position| role|$)/i,
+  // Reply-subject style ("Re: Backend Engineer position") — anchored to the
+  // start and requires the colon, so it can't match "re" inside an
+  // unrelated word like "review" or "requirements" mid-text.
+  /^re:\s*([^,\-\n]{3,60}?)\s*(?:position|role|opening)/i,
+  /for the ([A-Z][\w\s/,-]{2,60}?) (?:role|position)\b/,
+];
+
+function extractPosition(subject: string, body: string): string | null {
+  // Subject first, then the opening of the body — many application
+  // confirmations don't name the role in the subject line at all.
+  for (const text of [subject, body.slice(0, 1000)]) {
+    for (const pattern of POSITION_PATTERNS) {
+      const match = text.match(pattern);
+      if (match) return match[1].trim();
+    }
   }
   return null;
 }
@@ -189,7 +304,7 @@ export function classifyEmailHeuristically(input: ClassifyEmailInput): EmailClas
   const isJobRelated = category !== "OTHER";
 
   const domain = input.fromEmail?.split("@")[1]?.toLowerCase() ?? "";
-  const looksLikeNoReply = /no-?reply|notifications?@|donotreply/i.test(input.fromEmail ?? "");
+  const looksLikeNoReply = /no-?reply|do-?not-?reply|notifications?@|donotreply/i.test(input.fromEmail ?? "");
   const isAts = ATS_DOMAINS.some((ats) => domain.endsWith(ats));
 
   const salary = extractSalary(input.bodyText);
@@ -197,8 +312,8 @@ export function classifyEmailHeuristically(input: ClassifyEmailInput): EmailClas
   return {
     isJobRelated,
     category,
-    company: isJobRelated ? extractCompany(input.fromName, input.fromEmail, input.subject) : null,
-    position: isJobRelated ? extractPosition(input.subject) : null,
+    company: isJobRelated ? extractCompany(input.fromName, input.fromEmail, input.subject, input.bodyText) : null,
+    position: isJobRelated ? extractPosition(input.subject, input.bodyText) : null,
     suggestedStatus: STATUS_BY_CATEGORY[category] ?? null,
     recruiterName: isJobRelated && !looksLikeNoReply && !isAts ? input.fromName : null,
     recruiterEmail: isJobRelated && !looksLikeNoReply ? input.fromEmail : null,

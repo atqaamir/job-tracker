@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 
-const INTERVIEW_STATUSES = new Set(["PHONE_SCREEN", "TECHNICAL_INTERVIEW", "FINAL_INTERVIEW"]);
-const OFFER_STATUSES = new Set(["OFFER", "ACCEPTED"]);
-const ACTIVE_EXCLUDED = new Set(["REJECTED", "WITHDRAWN", "ACCEPTED", "GHOSTED"]);
+const INTERVIEW_STATUSES = ["PHONE_SCREEN", "TECHNICAL_INTERVIEW", "FINAL_INTERVIEW"] as const;
+const OFFER_STATUSES = ["OFFER", "ACCEPTED"] as const;
+const ACTIVE_EXCLUDED = ["REJECTED", "WITHDRAWN", "ACCEPTED", "GHOSTED"] as const;
 
 function monthKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -14,8 +15,59 @@ function weekKey(d: Date) {
   return `${d.getFullYear()}-W${String(week).padStart(2, "0")}`;
 }
 
+export const DASHBOARD_FILTER_VALUES = ["all", "active", "interviews", "assessments", "offers", "rejections"] as const;
+export type DashboardFilterKey = (typeof DASHBOARD_FILTER_VALUES)[number];
+
+/**
+ * Builds the same match criteria the dashboard stat cards count by, so
+ * clicking a card ("19 Interviews") always lands on exactly those
+ * applications — including ones whose current `status` no longer reflects
+ * it (e.g. interviewed, then later rejected). Matching on email category
+ * history rather than only `furthestStage` also means this works for
+ * applications synced before furthestStage tracking existed.
+ */
+export function dashboardFilterWhere(
+  userId: string,
+  filter: DashboardFilterKey,
+  sinceDate?: Date
+): Prisma.JobApplicationWhereInput {
+  const base: Prisma.JobApplicationWhereInput = {
+    userId,
+    isArchived: false,
+    ...(sinceDate ? { dateApplied: { gte: sinceDate } } : {}),
+  };
+
+  switch (filter) {
+    case "active":
+      return { ...base, status: { notIn: [...ACTIVE_EXCLUDED] } };
+    case "interviews":
+      return {
+        ...base,
+        OR: [
+          { status: { in: [...INTERVIEW_STATUSES] } },
+          { emails: { some: { category: { in: ["INTERVIEW_INVITATION", "INTERVIEW_FOLLOWUP"] } } } },
+        ],
+      };
+    case "assessments":
+      return {
+        ...base,
+        OR: [{ status: "ASSESSMENT" }, { emails: { some: { category: "CODING_ASSESSMENT" } } }],
+      };
+    case "offers":
+      return {
+        ...base,
+        OR: [{ status: { in: [...OFFER_STATUSES] } }, { emails: { some: { category: "OFFER" } } }],
+      };
+    case "rejections":
+      return { ...base, status: "REJECTED" };
+    case "all":
+    default:
+      return base;
+  }
+}
+
 export interface DashboardStats {
-  rangeMonths: number;
+  rangeDays: number;
   totalApplications: number;
   activeApplications: number;
   interviews: number;
@@ -32,9 +84,9 @@ export interface DashboardStats {
   unreadNotifications: number;
 }
 
-export async function getDashboardStats(userId: string, months = 12): Promise<DashboardStats> {
+export async function getDashboardStats(userId: string, days = 365): Promise<DashboardStats> {
   const from = new Date();
-  from.setMonth(from.getMonth() - months);
+  from.setDate(from.getDate() - days);
   from.setHours(0, 0, 0, 0);
 
   const applications = await prisma.jobApplication.findMany({
@@ -65,11 +117,11 @@ export async function getDashboardStats(userId: string, months = 12): Promise<Da
     const hasAssessmentEmail = categories.has("CODING_ASSESSMENT");
     const hasOfferEmail = categories.has("OFFER");
 
-    if (INTERVIEW_STATUSES.has(app.status) || hasInterviewEmail) interviews++;
+    if (INTERVIEW_STATUSES.includes(app.status as (typeof INTERVIEW_STATUSES)[number]) || hasInterviewEmail) interviews++;
     if (app.status === "ASSESSMENT" || hasAssessmentEmail) assessments++;
-    if (OFFER_STATUSES.has(app.status) || hasOfferEmail) offers++;
+    if (OFFER_STATUSES.includes(app.status as (typeof OFFER_STATUSES)[number]) || hasOfferEmail) offers++;
     if (app.status === "REJECTED") rejections++;
-    if (!ACTIVE_EXCLUDED.has(app.status) && !app.isArchived) active++;
+    if (!ACTIVE_EXCLUDED.includes(app.status as (typeof ACTIVE_EXCLUDED)[number]) && !app.isArchived) active++;
 
     const nonConfirmationEmails = app.emails.filter((e) => e.category && e.category !== "APPLICATION_CONFIRMATION");
     if (nonConfirmationEmails.length > 0) {
@@ -110,7 +162,7 @@ export async function getDashboardStats(userId: string, months = 12): Promise<Da
   ]);
 
   return {
-    rangeMonths: months,
+    rangeDays: days,
     totalApplications,
     activeApplications: active,
     interviews,

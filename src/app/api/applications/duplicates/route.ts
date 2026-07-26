@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUserId, UnauthorizedError } from "@/lib/session";
+import { normalizeCompanyKey } from "@/lib/company-normalize";
 
 export const dynamic = "force-dynamic";
 
@@ -10,11 +11,17 @@ export async function GET() {
     const applications = await prisma.jobApplication.findMany({
       where: { userId, isArchived: false },
       orderBy: { dateApplied: "desc" },
+      include: { emails: true },
     });
 
+    // Group by normalized company alone (not company+position): the same
+    // real company is often named inconsistently across emails (ATS
+    // no-reply vs. a recruiter's personal address vs. "Acme Careers"), and
+    // multiple emails about one job rarely repeat the exact position text.
+    // This mirrors the matching sync.ts uses when merging incoming emails.
     const groups = new Map<string, typeof applications>();
     for (const app of applications) {
-      const key = `${app.company.trim().toLowerCase()}::${app.position.trim().toLowerCase()}`;
+      const key = normalizeCompanyKey(app.company);
       const existing = groups.get(key);
       if (existing) {
         existing.push(app);

@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { ArrowUpDown, Copy, Download, Mail, MoreHorizontal, Pencil, Plus, Trash2, Upload, Archive } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowUpDown, Download, Mail, MoreHorizontal, Pencil, Plus, Trash2, Upload, Archive, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -14,28 +15,57 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApplicationFormDialog } from "@/components/applications/application-form-dialog";
-import { DuplicatesDialog } from "@/components/applications/duplicates-dialog";
 import { STATUS_LABELS, STATUS_COLORS, formatCurrency, formatDate, relativeTime, cn } from "@/lib/utils";
-import { APPLICATION_STATUS_VALUES } from "@/lib/validation";
+import { APPLICATION_STATUS_VALUES, PROGRESS_STAGE_VALUES } from "@/lib/validation";
 import type { JobApplicationDTO, PaginationInfo } from "@/types/application";
 
 const PAGE_SIZE = 20;
 
+const DASHBOARD_FILTER_LABELS: Record<string, string> = {
+  all: "All Applications",
+  active: "Active",
+  interviews: "Interviews",
+  assessments: "Assessments",
+  offers: "Offers",
+  rejections: "Rejections",
+};
+
 export function ApplicationsTable() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [applications, setApplications] = React.useState<JobApplicationDTO[]>([]);
   const [pagination, setPagination] = React.useState<PaginationInfo | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [search, setSearch] = React.useState("");
   const [status, setStatus] = React.useState<string>("all");
+  const [furthestStage, setFurthestStage] = React.useState<string>("all");
   const [archived, setArchived] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [sortBy, setSortBy] = React.useState("dateApplied");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
   const [formOpen, setFormOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<JobApplicationDTO | null>(null);
-  const [duplicatesOpen, setDuplicatesOpen] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
+  const [dashboardFilter, setDashboardFilter] = React.useState<string | null>(null);
+  const [sinceDays, setSinceDays] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Read a dashboard-card drill-down filter from the URL once on mount
+  // (e.g. /dashboard/applications?dashboardFilter=interviews&sinceDays=365).
+  React.useEffect(() => {
+    const df = searchParams.get("dashboardFilter");
+    const sd = searchParams.get("sinceDays");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the initial URL, not a render-triggered sync
+    if (df) setDashboardFilter(df);
+    if (sd) setSinceDays(sd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only on mount
+  }, []);
+
+  function clearDashboardFilter() {
+    setDashboardFilter(null);
+    setSinceDays(null);
+    router.replace("/dashboard/applications");
+  }
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -47,7 +77,13 @@ export function ApplicationsTable() {
       archived: String(archived),
     });
     if (search) params.set("search", search);
-    if (status !== "all") params.set("status", status);
+    if (dashboardFilter) {
+      params.set("dashboardFilter", dashboardFilter);
+      if (sinceDays) params.set("sinceDays", sinceDays);
+    } else {
+      if (status !== "all") params.set("status", status);
+      if (furthestStage !== "all") params.set("furthestStage", furthestStage);
+    }
 
     try {
       const res = await fetch(`/api/applications?${params.toString()}`);
@@ -57,7 +93,7 @@ export function ApplicationsTable() {
     } finally {
       setLoading(false);
     }
-  }, [page, sortBy, sortDir, archived, search, status]);
+  }, [page, sortBy, sortDir, archived, search, status, furthestStage, dashboardFilter, sinceDays]);
 
   React.useEffect(() => {
     const timeout = setTimeout(load, 250);
@@ -105,6 +141,20 @@ export function ApplicationsTable() {
 
   return (
     <div className="flex flex-col gap-4">
+      {dashboardFilter && (
+        <div className="flex w-fit items-center gap-2 rounded-full bg-zinc-900 px-3 py-1 text-xs text-white dark:bg-zinc-100 dark:text-zinc-900">
+          <span>
+            Dashboard filter: <strong>{DASHBOARD_FILTER_LABELS[dashboardFilter] ?? dashboardFilter}</strong>
+          </span>
+          <button
+            onClick={clearDashboardFilter}
+            className="rounded-full p-0.5 hover:bg-white/20 dark:hover:bg-black/10"
+            aria-label="Clear dashboard filter"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <Input
@@ -122,6 +172,7 @@ export function ApplicationsTable() {
               setPage(1);
               setStatus(v);
             }}
+            disabled={Boolean(dashboardFilter)}
           >
             <SelectTrigger className="w-48">
               <SelectValue placeholder="All statuses" />
@@ -135,6 +186,26 @@ export function ApplicationsTable() {
               ))}
             </SelectContent>
           </Select>
+          <Select
+            value={furthestStage}
+            onValueChange={(v) => {
+              setPage(1);
+              setFurthestStage(v);
+            }}
+            disabled={Boolean(dashboardFilter)}
+          >
+            <SelectTrigger className="w-56">
+              <SelectValue placeholder="Any stage reached" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any stage reached</SelectItem>
+              {PROGRESS_STAGE_VALUES.map((s) => (
+                <SelectItem key={s} value={s}>
+                  Reached: {STATUS_LABELS[s]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Tabs value={archived ? "archived" : "active"} onValueChange={(v) => setArchived(v === "archived")}>
             <TabsList>
               <TabsTrigger value="active">Active</TabsTrigger>
@@ -143,9 +214,6 @@ export function ApplicationsTable() {
           </Tabs>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setDuplicatesOpen(true)}>
-            <Copy className="h-3.5 w-3.5" /> Duplicates
-          </Button>
           <Button variant="outline" size="sm" onClick={() => window.open("/api/applications/export", "_blank")}>
             <Download className="h-3.5 w-3.5" /> Export
           </Button>
@@ -220,6 +288,13 @@ export function ApplicationsTable() {
                   <td className="px-3 py-2.5 text-zinc-500 dark:text-zinc-400">{formatDate(app.dateApplied)}</td>
                   <td className="px-3 py-2.5">
                     <Badge className={STATUS_COLORS[app.status]}>{STATUS_LABELS[app.status] ?? app.status}</Badge>
+                    {["REJECTED", "WITHDRAWN", "GHOSTED"].includes(app.status) && (
+                      <p className="mt-1 text-xs text-zinc-400">
+                        {app.furthestStage && app.furthestStage !== "APPLIED"
+                          ? `After ${STATUS_LABELS[app.furthestStage] ?? app.furthestStage}`
+                          : "Direct rejection"}
+                      </p>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-zinc-500 dark:text-zinc-400">
                     {app.dateLastEmail ? relativeTime(app.dateLastEmail) : "—"}
@@ -302,7 +377,6 @@ export function ApplicationsTable() {
       )}
 
       <ApplicationFormDialog open={formOpen} onOpenChange={setFormOpen} application={editing} onSaved={load} />
-      <DuplicatesDialog open={duplicatesOpen} onOpenChange={setDuplicatesOpen} onMerged={load} />
     </div>
   );
 }

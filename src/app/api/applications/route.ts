@@ -3,6 +3,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUserId, UnauthorizedError } from "@/lib/session";
 import { applicationCreateSchema } from "@/lib/validation";
+import { dashboardFilterWhere, DASHBOARD_FILTER_VALUES, type DashboardFilterKey } from "@/lib/stats";
 
 export const dynamic = "force-dynamic";
 
@@ -24,29 +25,57 @@ export async function GET(request: NextRequest) {
     const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? "20")));
     const search = searchParams.get("search")?.trim();
     const status = searchParams.get("status");
+    const furthestStage = searchParams.get("furthestStage");
     const archived = searchParams.get("archived") === "true";
     const sortBy = SORTABLE_FIELDS.has(searchParams.get("sortBy") ?? "")
       ? (searchParams.get("sortBy") as string)
       : "dateApplied";
     const sortDir = searchParams.get("sortDir") === "asc" ? "asc" : "desc";
+    const dashboardFilterParam = searchParams.get("dashboardFilter");
+    const sinceDaysParam = searchParams.get("sinceDays");
 
-    const where: Prisma.JobApplicationWhereInput = {
-      userId,
-      isArchived: archived,
-    };
+    // dashboardFilter mirrors exactly what the dashboard stat cards count
+    // (see dashboardFilterWhere) — clicking "19 Interviews" always lands on
+    // exactly those applications, including ones whose current status no
+    // longer reflects it (e.g. interviewed, then later rejected).
+    const dashboardFilter = DASHBOARD_FILTER_VALUES.includes(dashboardFilterParam as DashboardFilterKey)
+      ? (dashboardFilterParam as DashboardFilterKey)
+      : null;
 
-    if (status) {
+    const where: Prisma.JobApplicationWhereInput = dashboardFilter
+      ? dashboardFilterWhere(
+          userId,
+          dashboardFilter,
+          sinceDaysParam ? new Date(Date.now() - Number(sinceDaysParam) * 86_400_000) : undefined
+        )
+      : { userId, isArchived: archived };
+
+    if (!dashboardFilter && status) {
       where.status = status as Prisma.JobApplicationWhereInput["status"];
     }
 
+    if (!dashboardFilter && furthestStage) {
+      where.furthestStage = furthestStage as Prisma.JobApplicationWhereInput["furthestStage"];
+    }
+
     if (search) {
-      where.OR = [
-        { company: { contains: search, mode: "insensitive" } },
-        { position: { contains: search, mode: "insensitive" } },
-        { recruiterName: { contains: search, mode: "insensitive" } },
-        { location: { contains: search, mode: "insensitive" } },
-        { notes: { contains: search, mode: "insensitive" } },
-      ];
+      const searchOr: Prisma.JobApplicationWhereInput = {
+        OR: [
+          { company: { contains: search, mode: "insensitive" } },
+          { position: { contains: search, mode: "insensitive" } },
+          { recruiterName: { contains: search, mode: "insensitive" } },
+          { location: { contains: search, mode: "insensitive" } },
+          { notes: { contains: search, mode: "insensitive" } },
+        ],
+      };
+      // dashboardFilter may already use `where.OR` (interviews/assessments/
+      // offers) — combine both via AND instead of overwriting it.
+      if (where.OR) {
+        where.AND = [{ OR: where.OR }, searchOr];
+        delete where.OR;
+      } else {
+        Object.assign(where, searchOr);
+      }
     }
 
     const [total, applications] = await Promise.all([

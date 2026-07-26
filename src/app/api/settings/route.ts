@@ -2,11 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUserId, UnauthorizedError } from "@/lib/session";
 import { syncSettingsUpdateSchema } from "@/lib/validation";
+import { encrypt } from "@/lib/crypto";
 
 export const dynamic = "force-dynamic";
 
 const DEFAULT_GMAIL_QUERY =
   "job OR application OR interview OR offer OR rejection OR recruiter OR position OR opportunity";
+
+function omitApiKey<T extends { anthropicApiKey: string | null }>(settings: T) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructuring the key out is the point, not using it
+  const { anthropicApiKey: _omit, ...rest } = settings;
+  return rest;
+}
 
 export async function GET() {
   try {
@@ -16,7 +23,12 @@ export async function GET() {
       update: {},
       create: { userId, gmailQuery: DEFAULT_GMAIL_QUERY },
     });
-    return NextResponse.json({ settings });
+    const keyConfigured = Boolean(settings.anthropicApiKey) || Boolean(process.env.ANTHROPIC_API_KEY);
+    return NextResponse.json({
+      settings: omitApiKey(settings),
+      aiKeyConfigured: keyConfigured,
+      aiModeAvailable: settings.aiEnabled && keyConfigured,
+    });
   } catch (err) {
     if (err instanceof UnauthorizedError) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -35,26 +47,27 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
 
-    const existing = await prisma.syncSettings.findUnique({ where: { userId } });
-
-    // Changing the lookback window or search query only matters if the next
-    // sync actually re-scans that range — otherwise it would silently
-    // continue from the last sync's cursor and the new setting would have
-    // no visible effect. Resetting lastSyncAt makes the next sync treat this
-    // like a fresh backfill using the new window (already-processed emails
-    // are still skipped via their stored Gmail message ID, so this is safe,
-    // just does a wider Gmail search).
-    const windowChanged =
-      existing &&
-      (existing.daysToLookBack !== parsed.data.daysToLookBack || existing.gmailQuery !== parsed.data.gmailQuery);
+    // anthropicApiKey is tri-state: omitted (leave stored key as-is), ""
+    // (clear it), or a real value (encrypt and replace it). Never echoed
+    // back to the client either way.
+    const { anthropicApiKey, ...rest } = parsed.data;
+    const keyUpdate: { anthropicApiKey?: string | null } = {};
+    if (anthropicApiKey !== undefined) {
+      keyUpdate.anthropicApiKey = anthropicApiKey === "" ? null : encrypt(anthropicApiKey);
+    }
 
     const settings = await prisma.syncSettings.upsert({
       where: { userId },
-      update: { ...parsed.data, ...(windowChanged ? { lastSyncAt: null } : {}) },
-      create: { userId, ...parsed.data },
+      update: { ...rest, ...keyUpdate },
+      create: { userId, ...rest, ...keyUpdate },
     });
 
-    return NextResponse.json({ settings, willRescanOnNextSync: Boolean(windowChanged) });
+    const keyConfigured = Boolean(settings.anthropicApiKey) || Boolean(process.env.ANTHROPIC_API_KEY);
+    return NextResponse.json({
+      settings: omitApiKey(settings),
+      aiKeyConfigured: keyConfigured,
+      aiModeAvailable: settings.aiEnabled && keyConfigured,
+    });
   } catch (err) {
     if (err instanceof UnauthorizedError) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

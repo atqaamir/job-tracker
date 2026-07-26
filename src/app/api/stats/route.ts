@@ -8,9 +8,9 @@ export async function GET(request: NextRequest) {
   try {
     const userId = await requireUserId();
     const { searchParams } = new URL(request.url);
-    const months = Math.min(60, Math.max(1, Number(searchParams.get("months") ?? "12")));
+    const days = Math.min(730, Math.max(0, Number(searchParams.get("days") ?? "365")));
 
-    const stats = await getDashboardStats(userId, months);
+    const stats = await getDashboardStats(userId, days);
     return NextResponse.json(stats);
   } catch (err) {
     if (err instanceof UnauthorizedError) {

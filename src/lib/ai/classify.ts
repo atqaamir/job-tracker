@@ -8,13 +8,9 @@ import { classifyEmailHeuristically } from "@/lib/ai/heuristic-classify";
 export { EMAIL_CATEGORIES, APPLICATION_STATUSES, EMPLOYMENT_TYPES };
 export type { EmailClassification };
 
-let client: Anthropic | null = null;
-
-function getClient(): Anthropic {
-  if (!client) {
-    client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  }
-  return client;
+export interface AIConfig {
+  apiKey: string;
+  model: string;
 }
 
 const ClassificationSchema = z.object({
@@ -60,8 +56,8 @@ Determine whether the email is genuinely related to a job the recipient applied 
 
 Extract company and position names as they would naturally appear on a resume (e.g. "Google", "Senior Software Engineer"), not verbatim email subject lines. Only fill fields you are reasonably confident about; use null otherwise. Never fabricate a recruiter name/email that isn't in the email.`;
 
-async function classifyEmailWithClaude(input: ClassifyEmailInput): Promise<EmailClassification> {
-  const anthropic = getClient();
+async function classifyEmailWithClaude(input: ClassifyEmailInput, config: AIConfig): Promise<EmailClassification> {
+  const anthropic = new Anthropic({ apiKey: config.apiKey });
 
   const userContent = `From: ${input.fromName ?? ""} <${input.fromEmail ?? "unknown"}>
 Date: ${input.receivedAt.toISOString()}
@@ -70,12 +66,20 @@ Subject: ${input.subject}
 Body:
 ${input.bodyText.slice(0, 12_000)}`;
 
+  // Haiku 4.5 doesn't support output_config.effort or the thinking param at
+  // all (both error on this model tier) — those are Opus/Sonnet-5-only.
+  // For the models that do support them, this is plain classification/
+  // extraction, not deep reasoning, so keep effort low and thinking off —
+  // both cheaper and avoids thinking eating into the 1024-token budget.
+  const isHaiku = config.model === "claude-haiku-4-5";
+
   const response = await anthropic.messages.parse({
-    model: "claude-opus-4-8",
+    model: config.model,
     max_tokens: 1024,
     system: SYSTEM_PROMPT,
+    ...(isHaiku ? {} : { thinking: { type: "disabled" as const } }),
     output_config: {
-      effort: "low",
+      ...(isHaiku ? {} : { effort: "low" as const }),
       format: zodOutputFormat(ClassificationSchema),
     },
     messages: [{ role: "user", content: userContent }],
@@ -90,14 +94,18 @@ ${input.bodyText.slice(0, 12_000)}`;
 
 /**
  * Classifies an email into a job-search category and extracts structured
- * fields. Uses Claude when ANTHROPIC_API_KEY is configured (more accurate:
- * true summarization, better company/position/status inference); otherwise
- * falls back to a free, offline, keyword-based classifier so the app works
- * at zero cost. See src/lib/ai/heuristic-classify.ts.
+ * fields. Uses Claude when an AI config (per-user API key + model, from
+ * SyncSettings) is passed in — more accurate: true summarization, better
+ * company/position/status inference. Otherwise falls back to a free,
+ * offline, keyword-based classifier so the app works at zero cost. See
+ * src/lib/ai/heuristic-classify.ts.
  */
-export async function classifyEmail(input: ClassifyEmailInput): Promise<EmailClassification> {
-  if (process.env.ANTHROPIC_API_KEY) {
-    return classifyEmailWithClaude(input);
+export async function classifyEmail(
+  input: ClassifyEmailInput,
+  aiConfig: AIConfig | null = null
+): Promise<EmailClassification> {
+  if (aiConfig) {
+    return classifyEmailWithClaude(input, aiConfig);
   }
   return classifyEmailHeuristically(input);
 }

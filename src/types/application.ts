@@ -9,6 +9,7 @@ export interface JobApplicationDTO {
   company: string;
   position: string;
   status: string;
+  furthestStage: string | null;
   dateApplied: string | null;
   dateLastEmail: string | null;
   recruiterName: string | null;

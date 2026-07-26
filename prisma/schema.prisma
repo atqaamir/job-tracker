@@ -102,6 +102,11 @@ model JobApplication {
   company         String
   position        String
   status          ApplicationStatus @default(APPLIED)
+  // The most advanced non-terminal stage ever reached (e.g. TECHNICAL_INTERVIEW),
+  // preserved even after `status` later moves to REJECTED/WITHDRAWN/GHOSTED —
+  // otherwise a rejection after an interview looks identical to a rejection
+  // with no interview at all.
+  furthestStage   ApplicationStatus?
   dateApplied     DateTime?
   dateLastEmail   DateTime?
 
@@ -170,6 +175,9 @@ model SyncLog {
   completedAt         DateTime?
   status              String    @default("running")
   error               String?   @db.Text
+  // Set by POST /api/sync/cancel; the running sync's loop polls this and
+  // stops early, marking itself "cancelled" instead of "completed".
+  cancelRequested     Boolean   @default(false)
 
   emailsScanned       Int       @default(0)
   emailsProcessed     Int       @default(0)
@@ -207,6 +215,15 @@ model SyncSettings {
   autoSync        Boolean   @default(true)
   gmailQuery      String    @default("job OR application OR interview OR offer OR rejection OR recruiter OR position OR opportunity")
   daysToLookBack  Int       @default(365)
+
+  // Per-user AI classification config. anthropicApiKey is encrypted at rest
+  // (same AES-256-GCM scheme as OAuth tokens — see src/lib/crypto.ts) and
+  // never returned to the client. Falls back to the server's
+  // ANTHROPIC_API_KEY env var when unset, so existing single-deployer setups
+  // keep working without configuring a key per user.
+  aiEnabled       Boolean   @default(false)
+  aiModel         String    @default("claude-haiku-4-5")
+  anthropicApiKey String?   @db.Text
 
   updatedAt       DateTime  @updatedAt
 }

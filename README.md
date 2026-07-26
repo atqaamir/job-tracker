@@ -7,21 +7,27 @@ dashboard — no manual data entry.
 
 **This app is free to run.** Gmail sync, email classification, the dashboard,
 and the daily digest all work with zero API cost using a built-in offline
-classifier. Adding an Anthropic API key is optional and upgrades
-classification accuracy (real summarization, better extraction) for a small
-usage-based fee. See [Free vs. AI-powered classification](#free-vs-ai-powered-classification).
+classifier. Turning on AI classification (per-user, from Settings) upgrades
+accuracy (real summarization, better extraction) for a small usage-based fee,
+and by default only applies to the most recent 2 weeks of any given sync to
+keep cost predictable. See [Free vs. AI-powered classification](#free-vs-ai-powered-classification).
 
 ## Features
 
-- **Gmail integration** — read-only OAuth access, scans for job-related email, syncs every 9:00 AM automatically (and on demand).
-- **Free by default, AI-upgradable classification** — a built-in rule-based classifier (no API key, no cost) detects category, company, position, salary, location, and more. Set `ANTHROPIC_API_KEY` to switch to Claude for higher accuracy and real summarization — no code changes needed.
-- **Automatic application tracking** — emails are merged into application records by Gmail thread and by company/position, so a single application accumulates its full email history.
-- **Dashboard** — applications, interviews, assessments, offers, rejections, response rate, interview rate, average response time, and applications-over-time — filterable by the last 3/6/12/24 months.
-- **Applications table** — search, filter by status, sort, paginate, inline edit, archive, delete, duplicate detection/merge, CSV export/import.
-- **Notifications** — in-app alerts for interview invitations, recruiter replies, offers, and rejections.
+- **Gmail integration** — read-only OAuth access, scans for job-related email (Primary category only — Promotions/Social/Updates/Forums are excluded), syncs every 9:00 AM automatically (and on demand).
+- **Free by default, AI-upgradable classification** — a built-in rule-based classifier (no API key, no cost) detects category, company, position, salary, location, and more. Enable AI and set a Claude API key per-user from **Settings** for higher accuracy and real summarization — no code changes or redeploy needed. AI is capped to the most recent 2 weeks of any sync by default; syncing further back than that prompts you to choose how far AI should reach (remembered per browser afterward).
+- **Background, cancellable sync** — sync runs as a server-side job that keeps going even if you close the tab or navigate away; a live progress bar tracks emails scanned vs. processed, and a **Cancel** button stops it mid-run without losing your last-sync cursor.
+- **Two sync modes** — **Sync Now** fetches only what's new since your last successful sync; **Fetch All Again** wipes all fetched data and re-fetches the full window configured in Settings (default: 1 year).
+- **Automatic application tracking** — emails are merged into application records by Gmail thread and by company/position, so a single application accumulates its full email history rather than creating duplicate rows per email.
+- **Furthest-stage tracking** — each application tracks both its current status and the furthest pipeline stage it ever reached, so a rejection after an interview stays distinguishable from a rejection with no interview.
+- **Dashboard** — applications, interviews, assessments, offers, rejections, response rate, interview rate, average response time, and applications-over-time — filterable by today/2 weeks/3/6/12 months. Every stat card is clickable and deep-links to the Applications table pre-filtered to match.
+- **Applications table** — search, filter by status/furthest stage, sort, paginate, inline edit, archive, delete, CSV export/import.
+- **Notifications** — in-app alerts for interview invitations, recruiter replies, offers, and rejections, created only by the automatic daily sync (manual syncs don't spam notifications for data you're already looking at).
 - **Daily digest** — the 9:00 AM sync produces a summary (new applications, replies, stale follow-ups, errors) shown on the dashboard.
-- **Configurable sync window** — set how many days back to search (Settings page), edit the raw Gmail search query, or turn off the daily auto-sync.
-- **Encrypted token storage** — Gmail OAuth tokens are encrypted (AES-256-GCM) before being written to the database.
+- **AI Mode indicator** — a badge in the app header shows at a glance whether AI classification is currently on or off, linking to Settings.
+- **Configurable sync window** — set how many days back "Fetch All Again" searches (Settings page), edit the raw Gmail search query, or turn off the daily auto-sync.
+- **Duplicate detection/merge** and **delete all fetched data**, both from the Settings page.
+- **Encrypted storage** — Gmail OAuth tokens and per-user Anthropic API keys are encrypted (AES-256-GCM) before being written to the database.
 - **Dark mode / light mode**, responsive layout.
 
 ## Tech Stack
@@ -94,54 +100,72 @@ prisma/seed.ts                  Sample-data seed script (npm run db:seed)
 src/lib/gmail.ts                 Gmail API client (list/fetch/parse messages, token refresh)
 src/lib/ai/classify.ts            Dispatches to Claude (if configured) or the free classifier
 src/lib/ai/heuristic-classify.ts   Free, offline, rule-based email classifier (no API key needed)
-src/lib/sync.ts                     Core sync engine: Gmail -> classify -> merge into applications
-src/lib/stats.ts                     Dashboard aggregate stats
-src/lib/crypto.ts                     AES-256-GCM helpers for encrypting stored OAuth tokens
-src/lib/prisma.ts                      Prisma client + the token-encryption extension
-src/app/api/                            Route handlers (applications, settings, stats, notifications, sync, cron)
-src/app/dashboard/                       Dashboard, applications table, and settings pages
-src/components/                           UI components
+src/lib/sync.ts                     Core sync engine: Gmail -> classify -> merge into applications, cancellable
+src/lib/clear-fetched-data.ts        Wipes a user's applications/emails/sync history (Fetch All Again, delete-all)
+src/lib/stats.ts                      Dashboard aggregate stats + shared dashboard-filter predicate
+src/lib/ai-status.ts                   Whether AI classification is currently usable for a user
+src/lib/ai-sync-prefs.ts                Per-browser localStorage prefs for the AI-timeframe confirmation
+src/lib/crypto.ts                        AES-256-GCM helpers for encrypting OAuth tokens and API keys
+src/lib/prisma.ts                         Prisma client + the token-encryption extension
+src/app/api/sync/                          Sync (POST), status polling (GET), and cancel (POST) routes
+src/app/api/                                Route handlers (applications, settings, stats, notifications, cron)
+src/app/dashboard/                           Dashboard, applications table, and settings pages
+src/components/                               UI components
 ```
 
 ## How the Gmail Sync Works
 
-1. `runSync(userId)` (`src/lib/sync.ts`) reads the user's `SyncSettings` (search query, lookback window, last sync time).
-2. It lists Gmail message IDs matching the query since the last sync, skipping any message already stored as an `EmailRecord`.
-3. Each new message is fetched, parsed, and classified (category, company, position, status, recruiter, salary, location, deadline, summary, sentiment) — by Claude if `ANTHROPIC_API_KEY` is set, otherwise by the free built-in classifier. See below.
-4. Non-job-related emails are discarded. Job-related emails are matched to an existing `JobApplication` by Gmail thread first, then by normalized company + position, or a new application is created.
-5. Notifications are created for interview invitations, assessments, offers, rejections, and recruiter replies.
-6. A `SyncLog` row records the run (counts, errors, and the full summary as JSON), which the dashboard displays as the "last sync" card.
+1. `POST /api/sync` creates a `SyncLog` row and immediately returns its ID; the actual work continues server-side via `after()`, detached from the request — closing the tab or navigating away doesn't stop it. The client polls `GET /api/sync/status` to show a live progress bar and can call `POST /api/sync/cancel` to request an early stop.
+2. `runSync(userId, options)` (`src/lib/sync.ts`) reads the user's `SyncSettings` (search query, lookback window, last sync time, AI settings) and computes the search window: **Sync Now** uses `lastSyncAt` as the cursor (true incremental); **Fetch All Again** wipes existing data first and uses the configured "Fetch All Again window" (default 1 year); a brand-new account with no cursor and no prior data pulls a full year.
+3. It lists Gmail message IDs matching the query (restricted to the Primary category) since that cursor, skipping any message already stored as an `EmailRecord`.
+4. Each new message is fetched, parsed, and classified (category, company, position, status, recruiter, salary, location, deadline, summary, sentiment). Classification uses Claude only for the most recent slice of the fetch (2 weeks by default, or whatever the user confirmed in the AI-timeframe prompt) when AI is enabled and a key is configured (per-user, or falling back to the server's `ANTHROPIC_API_KEY`); everything older in the same fetch — and everything whenever AI is off — uses the free built-in classifier. See below. Between messages, the loop checks whether cancellation was requested and stops early if so, leaving `lastSyncAt` untouched so the next sync still covers the unprocessed remainder.
+5. Non-job-related emails are discarded. Job-related emails are matched to an existing `JobApplication` by Gmail thread first, then by normalized company + position, or a new application is created — so multiple emails about the same job (confirmation, recruiter reply, interview, rejection) collapse into one row. Each application also tracks the furthest pipeline stage it ever reached, independent of its current status.
+6. Notifications are created for interview invitations, assessments, offers, rejections, and recruiter replies — but only when triggered by the automatic daily cron, not by a manual sync.
+7. A `SyncLog` row records the run (counts, errors, status — `completed`/`completed_with_errors`/`failed`/`cancelled` — and the full summary as JSON), which the dashboard displays as the "last sync" card.
 
-This same function powers both the **Sync Now** button (`POST /api/sync`) and
-the daily cron (`GET /api/cron/sync`), so it's safe to trigger manually at any
-time — it only processes emails it hasn't seen before.
+This same function powers the **Sync Now** and **Fetch All Again** buttons
+(`POST /api/sync`) and the daily cron (`GET /api/cron/sync`), so it's safe to
+trigger manually at any time — it only processes emails it hasn't seen before.
 
-Want more control over the lookback window or the Gmail search query? Go to
-**Settings** in the app — see [API.md](./API.md#settings) for the underlying
-endpoint if you're scripting it.
+Want more control over the lookback window, the Gmail search query, or AI
+classification? Go to **Settings** in the app — see
+[API.md](./API.md#settings) for the underlying endpoint if you're scripting
+it.
 
 See **[API.md](./API.md)** for the full endpoint reference.
 
 ## Free vs. AI-powered classification
 
-Job Tracker works in two modes, chosen automatically based on whether
-`ANTHROPIC_API_KEY` is set — no config flag, no code change:
+Job Tracker works in two modes, controlled per-user from **Settings** (AI
+enabled/disabled, model choice, and API key) — no redeploy needed to switch:
 
-| | Free mode (default) | AI mode (`ANTHROPIC_API_KEY` set) |
+| | Free mode (default) | AI mode (enabled in Settings + key configured) |
 |---|---|---|
 | Cost | $0 | Usage-based, typically cents-to-a-few-dollars/month for personal volume |
 | How it works | Keyword/regex rules in `src/lib/ai/heuristic-classify.ts` — no network call | Claude reads the full email and reasons about it |
 | Category detection | Good — pattern-matches common phrasing (rejection, interview invite, assessment, offer, etc.) | Better — understands phrasing the rules don't cover |
-| Company / position | Guessed from sender domain and subject line patterns | Extracted from the email's actual content |
+| Company / position | Guessed from sender domain, subject line, and body patterns | Extracted from the email's actual content |
 | Summary | First ~200 characters of the email body | A real one-to-two sentence summary |
 | Salary / deadline extraction | Basic regex (`$120,000 - $140,000` style ranges, `by <date>` phrasing) | More robust, understands more phrasings |
 
-Both modes write to the exact same database fields, so you can switch at any
-time by adding or removing `ANTHROPIC_API_KEY` and redeploying — nothing
-about existing data changes, and future syncs just start using the new mode.
+Even with AI mode on, cost stays capped: only the most recent 2 weeks of any
+given sync use Claude by default (older emails in the same fetch always use
+the free classifier), and syncing further back than that — a stale "Sync
+Now" gap, or a "Fetch All Again" backfill — pops up a one-time-per-button
+confirmation letting you pick how far back AI should apply (2 weeks, 1/3/6/12
+months, or the entire range). The daily automatic cron sync always uses AI
+(if enabled) with no prompt, since its window is naturally small. Your choice
+is remembered per browser and can be reviewed or reset from Settings.
 
-If you want the free mode, just don't set `ANTHROPIC_API_KEY` at all (see
-`.env.example`) and skip step 4 in [DEPLOYMENT.md](./DEPLOYMENT.md).
+The API key can be your own per-user key (entered in Settings, encrypted at
+rest) or the server's `ANTHROPIC_API_KEY` env var as a fallback for
+single-deployer setups. Both modes write to the exact same database fields,
+so switching doesn't touch existing data — future syncs just start using the
+new mode.
+
+If you want the free mode, just leave AI disabled in Settings (the default)
+and don't set `ANTHROPIC_API_KEY` (see `.env.example`); skip step 4 in
+[DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ## Testing locally against your real Gmail
 
