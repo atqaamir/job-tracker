@@ -207,24 +207,28 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
         // Only messages within the last aiRecentDays get AI — everything
         // older in the fetched range always uses the free classifier.
         const aiConfig = message.receivedAt < recentCutoff ? null : baseAiConfig;
-        const classification = await classifyEmail(
-          {
-            subject: message.subject,
-            fromName: message.fromName,
-            fromEmail: message.fromEmail,
-            bodyText: message.bodyText,
-            receivedAt: message.receivedAt,
-          },
-          aiConfig
-        );
+        const emailInput = {
+          subject: message.subject,
+          fromName: message.fromName,
+          fromEmail: message.fromEmail,
+          bodyText: message.bodyText,
+          receivedAt: message.receivedAt,
+        };
 
-        summary.emailsProcessed++;
-        // Live progress for a polling client — cheap relative to the Gmail
-        // fetch + classification call this loop iteration already made.
-        await prisma.syncLog.update({
-          where: { id: syncLog.id },
-          data: { emailsProcessed: summary.emailsProcessed },
-        });
+        let classification;
+        try {
+          classification = await classifyEmail(emailInput, aiConfig);
+        } catch (aiErr) {
+          // An AI failure (bad key, rate limit, transient API error) used to
+          // mean silently dropping the email entirely — nothing after this
+          // call ran, so it was never even considered for the free
+          // classifier. Recorded here for visibility (see Sync History) but
+          // still falls back so real data isn't lost to a bad API key.
+          summary.errors.push(
+            `Message ${messageId}: AI classification failed, used free classifier instead — ${aiErr instanceof Error ? aiErr.message : String(aiErr)}`
+          );
+          classification = await classifyEmail(emailInput, null);
+        }
 
         if (!classification.isJobRelated) {
           return;
@@ -367,6 +371,17 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
         }
       } catch (err) {
         summary.errors.push(`Message ${messageId}: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        summary.emailsProcessed++;
+        // Live progress/heartbeat for a polling client — fires exactly once
+        // per message regardless of success or failure, so a run with many
+        // consecutive failures (e.g. an invalid API key) still keeps this
+        // row's updatedAt fresh instead of going dark long enough to
+        // falsely trip the stale-sync auto-recovery in /api/sync/status.
+        await prisma.syncLog.update({
+          where: { id: syncLog.id },
+          data: { emailsProcessed: summary.emailsProcessed },
+        });
       }
     }
 
@@ -429,6 +444,11 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
         data: {
           completedAt: new Date(),
           status: "cancelled",
+          // Clears out a stale "interrupted" message that /api/sync/status's
+          // staleness auto-recovery may have set on this same row earlier —
+          // it's misleading to leave that visible once the run actually
+          // reaches a real terminal state on its own.
+          error: null,
           emailsScanned: summary.emailsScanned,
           emailsProcessed: summary.emailsProcessed,
           applicationsNew: summary.applicationsNew,
@@ -489,6 +509,9 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
       data: {
         completedAt: new Date(),
         status: summary.errors.length > 0 ? "completed_with_errors" : "completed",
+        // See the cancelled branch above — clears any stale "interrupted"
+        // message from a false-positive staleness check earlier in this run.
+        error: null,
         emailsScanned: summary.emailsScanned,
         emailsProcessed: summary.emailsProcessed,
         applicationsNew: summary.applicationsNew,

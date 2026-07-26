@@ -3,7 +3,7 @@ import { after } from "next/server";
 import { requireUserId, UnauthorizedError } from "@/lib/session";
 import { runSync } from "@/lib/sync";
 import { prisma } from "@/lib/prisma";
-import { clearFetchedData } from "@/lib/clear-fetched-data";
+import { clearFetchedData, hasRunningSync } from "@/lib/clear-fetched-data";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -20,6 +20,13 @@ export async function POST(request: NextRequest) {
         ? Math.min(18_250, Math.max(0, Math.floor(body.aiRecentDays)))
         : 14;
     const fullBackfill = typeof body.fullBackfill === "boolean" ? body.fullBackfill : false;
+
+    // Two overlapping syncs for the same user is never correct — besides
+    // wasted work, a second "Fetch All Again" would wipe the SyncLog row
+    // the first sync is still actively updating, crashing it mid-run.
+    if (await hasRunningSync(userId)) {
+      return NextResponse.json({ error: "A sync is already in progress." }, { status: 409 });
+    }
 
     if (fullBackfill) {
       await clearFetchedData(userId);

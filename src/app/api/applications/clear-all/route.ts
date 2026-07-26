@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireUserId, UnauthorizedError } from "@/lib/session";
-import { clearFetchedData } from "@/lib/clear-fetched-data";
+import { clearFetchedData, hasRunningSync } from "@/lib/clear-fetched-data";
 
 export const dynamic = "force-dynamic";
 
 export async function DELETE() {
   try {
     const userId = await requireUserId();
+    if (await hasRunningSync(userId)) {
+      return NextResponse.json({ error: "Can't delete while a sync is in progress." }, { status: 409 });
+    }
     const { deletedApplications } = await clearFetchedData(userId);
     return NextResponse.json({ ok: true, deletedApplications });
   } catch (err) {
