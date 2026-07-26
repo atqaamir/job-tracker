@@ -7,11 +7,15 @@ import { STATUS_LABELS } from "@/lib/utils";
 
 interface Props {
   data: Record<string, number>;
-  getHref?: (status: string) => string;
+  // A plain value, not a function — this is a Client Component rendered
+  // from a Server Component page, and functions can't be passed across
+  // that boundary. The href is built here instead, from `days`.
+  days?: number;
 }
 
-export function StatusDistributionChart({ data, getHref }: Props) {
+export function StatusDistributionChart({ data, days }: Props) {
   const router = useRouter();
+  const getHref = days !== undefined ? (status: string) => `/dashboard/applications?status=${status}&sinceDays=${days}` : undefined;
   const entries = Object.entries(data)
     .map(([status, count]) => ({ status, label: STATUS_LABELS[status] ?? status, count }))
     .sort((a, b) => b.count - a.count);
