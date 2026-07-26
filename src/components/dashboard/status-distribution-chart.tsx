@@ -1,14 +1,17 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { STATUS_CHART_COLOR } from "@/lib/chart-colors";
 import { STATUS_LABELS } from "@/lib/utils";
 
 interface Props {
   data: Record<string, number>;
+  getHref?: (status: string) => string;
 }
 
-export function StatusDistributionChart({ data }: Props) {
+export function StatusDistributionChart({ data, getHref }: Props) {
+  const router = useRouter();
   const entries = Object.entries(data)
     .map(([status, count]) => ({ status, label: STATUS_LABELS[status] ?? status, count }))
     .sort((a, b) => b.count - a.count);
@@ -40,7 +43,20 @@ export function StatusDistributionChart({ data }: Props) {
             fontSize: 12,
           }}
         />
-        <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={20} label={{ position: "right", fill: "var(--chart-muted)", fontSize: 12 }}>
+        <Bar
+          dataKey="count"
+          radius={[0, 4, 4, 0]}
+          maxBarSize={20}
+          label={{ position: "right", fill: "var(--chart-muted)", fontSize: 12 }}
+          onClick={
+            getHref
+              ? (entry: { payload?: { status: string } }) => {
+                  if (entry.payload) router.push(getHref(entry.payload.status));
+                }
+              : undefined
+          }
+          cursor={getHref ? "pointer" : undefined}
+        >
           {entries.map((entry) => (
             <Cell key={entry.status} fill={STATUS_CHART_COLOR[entry.status] ?? "var(--chart-blue)"} />
           ))}

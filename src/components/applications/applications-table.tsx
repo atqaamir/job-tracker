@@ -76,13 +76,23 @@ export function ApplicationsTable() {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Read a dashboard-card drill-down filter from the URL once on mount
-  // (e.g. /dashboard/applications?dashboardFilter=interviews&sinceDays=365).
+  // (e.g. /dashboard/applications?dashboardFilter=interviews&sinceDays=365),
+  // or a direct status-bar drill-down (e.g.
+  // /dashboard/applications?status=REJECTED&sinceDays=365) from the Status
+  // Distribution chart — the latter maps straight onto the same Status
+  // filter and standalone time-range control the page already has.
   React.useEffect(() => {
     const df = searchParams.get("dashboardFilter");
     const sd = searchParams.get("sinceDays");
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the initial URL, not a render-triggered sync
-    if (df) setDashboardFilter(df);
-    if (sd) setSinceDays(sd);
+    const st = searchParams.get("status");
+    if (df) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the initial URL, not a render-triggered sync
+      setDashboardFilter(df);
+      if (sd) setSinceDays(sd);
+    } else {
+      if (st) setStatusFilter(st);
+      if (sd) setRange(sd);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only on mount
   }, []);
 

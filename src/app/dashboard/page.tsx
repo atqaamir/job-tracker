@@ -107,7 +107,10 @@ export default async function DashboardPage({
             <CardTitle>Status Distribution</CardTitle>
           </CardHeader>
           <CardContent>
-            <StatusDistributionChart data={stats.statusDistribution} />
+            <StatusDistributionChart
+              data={stats.statusDistribution}
+              getHref={(status) => `/dashboard/applications?status=${status}&sinceDays=${days}`}
+            />
           </CardContent>
         </Card>
       </div>
