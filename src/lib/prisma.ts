@@ -4,7 +4,34 @@ import { decrypt, encrypt, isEncrypted } from "@/lib/crypto";
 
 const ENCRYPTED_ACCOUNT_FIELDS = ["access_token", "refresh_token", "id_token"] as const;
 
+// The Account model's writable columns. OAuth providers (e.g. Google's
+// `refresh_token_expires_in`) sometimes include extra fields in their token
+// response beyond the OAuth spec; next-auth forwards the whole object to the
+// adapter, so anything not in this set must be dropped before it reaches
+// Prisma or `account.create`/`update` throws PrismaClientValidationError.
+const ACCOUNT_FIELDS = new Set([
+  "id",
+  "userId",
+  "type",
+  "provider",
+  "providerAccountId",
+  "refresh_token",
+  "access_token",
+  "expires_at",
+  "token_type",
+  "scope",
+  "id_token",
+  "session_state",
+]);
+
 type AccountRecord = Record<string, unknown> | null | undefined;
+
+function stripUnknownAccountFields(data: AccountRecord): void {
+  if (!data) return;
+  for (const key of Object.keys(data)) {
+    if (!ACCOUNT_FIELDS.has(key)) delete data[key];
+  }
+}
 
 function encryptAccountFields(data: AccountRecord): void {
   if (!data) return;
@@ -40,14 +67,18 @@ function withTokenEncryption(client: PrismaClient) {
     query: {
       account: {
         create({ args, query }) {
+          stripUnknownAccountFields(args.data as AccountRecord);
           encryptAccountFields(args.data as AccountRecord);
           return query(args);
         },
         update({ args, query }) {
+          stripUnknownAccountFields(args.data as AccountRecord);
           encryptAccountFields(args.data as AccountRecord);
           return query(args);
         },
         upsert({ args, query }) {
+          stripUnknownAccountFields(args.create as AccountRecord);
+          stripUnknownAccountFields(args.update as AccountRecord);
           encryptAccountFields(args.create as AccountRecord);
           encryptAccountFields(args.update as AccountRecord);
           return query(args);

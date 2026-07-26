@@ -70,12 +70,14 @@ export interface GmailMessageSummary {
 }
 
 /**
- * Lists message IDs matching a Gmail search query, following pagination.
+ * Lists message IDs matching a Gmail search query, following pagination
+ * until Gmail reports no more pages. No artificial cap — a large lookback
+ * window with many matches will make several requests, but every matching
+ * message is returned.
  */
 export async function listMessageIds(
   userId: string,
-  query: string,
-  maxResults = 500
+  query: string
 ): Promise<GmailMessageSummary[]> {
   const gmail = await getGmailClient(userId);
   const results: GmailMessageSummary[] = [];
@@ -94,9 +96,9 @@ export async function listMessageIds(
       }
     }
     pageToken = res.data.nextPageToken ?? undefined;
-  } while (pageToken && results.length < maxResults);
+  } while (pageToken);
 
-  return results.slice(0, maxResults);
+  return results;
 }
 
 export interface ParsedGmailMessage {
