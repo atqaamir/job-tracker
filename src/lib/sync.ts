@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { listMessageIds, getMessage, GmailAuthError } from "@/lib/gmail";
+import { listMessageIds, getMessage, estimateMessageCount, GmailAuthError } from "@/lib/gmail";
 import { classifyEmail, type AIConfig } from "@/lib/ai/classify";
 import { decrypt } from "@/lib/crypto";
 import { normalizeCompanyKey } from "@/lib/company-normalize";
@@ -201,6 +201,18 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
       windowEnd = windowStart;
     }
 
+    // A single cheap request for Gmail's own approximate total, so the
+    // progress bar has a stable denominator from the start — otherwise it
+    // only grows as each week gets listed, making early progress look far
+    // further along than it really is. It's an estimate, not authoritative;
+    // the real matched count can end up slightly above or below it.
+    const fullRangeAfterEpoch = Math.floor(since.getTime() / 1000);
+    summary.emailsScanned = await estimateMessageCount(
+      userId,
+      `${settings.gmailQuery} after:${fullRangeAfterEpoch} category:primary`
+    );
+    await prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: summary.emailsScanned } });
+
     async function processMessage(messageId: string, threadId: string) {
       try {
         const message = await getMessage(userId, messageId);
@@ -395,23 +407,10 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
       // out a lot of noise regardless of what the user's custom query says.
       const windowQuery = `${settings.gmailQuery} after:${afterEpoch} before:${beforeEpoch} category:primary`;
 
-      // A big backfill can take dozens of sequential Gmail list-pages before
-      // this resolves — report the running count after each page so the
-      // client's progress bar visibly grows during listing instead of
-      // sitting on "starting…" the whole time.
-      const windowMessageIds = await listMessageIds(
-        userId,
-        windowQuery,
-        (scannedSoFar) => {
-          void prisma.syncLog.update({
-            where: { id: syncLog.id },
-            data: { emailsScanned: summary.emailsScanned + scannedSoFar },
-          });
-        },
-        checkCancelled
-      );
-      summary.emailsScanned += windowMessageIds.length;
-      await prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: summary.emailsScanned } });
+      // The progress bar's total comes from the upfront estimate above, not
+      // from accumulating each window's count — checkCancelled here still
+      // lets a large window's pagination be interrupted mid-listing.
+      const windowMessageIds = await listMessageIds(userId, windowQuery, undefined, checkCancelled);
 
       if (cancelled) break;
 

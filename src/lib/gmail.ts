@@ -111,6 +111,22 @@ export async function listMessageIds(
   return results;
 }
 
+/**
+ * A fast, single-request approximate count of how many messages match a
+ * query, using Gmail's own `resultSizeEstimate` rather than paginating
+ * through the whole result set. Used to seed the sync progress bar's total
+ * upfront — the windowed (week-by-week, newest-first) fetch in runSync
+ * doesn't otherwise know the grand total until every window has been
+ * listed, which made the denominator visibly grow over the course of a
+ * large backfill instead of staying fixed. It's an estimate, not an exact
+ * count, so the real matched total can end up slightly above or below it.
+ */
+export async function estimateMessageCount(userId: string, query: string): Promise<number> {
+  const gmail = await getGmailClient(userId);
+  const res = await gmail.users.messages.list({ userId: "me", q: query, maxResults: 1 });
+  return res.data.resultSizeEstimate ?? 0;
+}
+
 export interface ParsedGmailMessage {
   id: string;
   threadId: string;
