@@ -86,7 +86,28 @@ const ATS_DOMAINS = [
   "successfactors.com",
 ];
 
-const GENERIC_EMAIL_DOMAINS = ["gmail.com", "outlook.com", "yahoo.com", "hotmail.com", "icloud.com", "aol.com"];
+// linkedin.com is never itself the employer — job alerts, InMail, and
+// notification emails all come from this one domain regardless of which
+// company they're actually about. Treating it like a real company domain
+// (the bug here) made every LinkedIn-relayed email extract company:
+// "Linkedin", and since most don't state a specific position either, they
+// all fell into the same company-only merge bucket in findMatchingApplication
+// — corrupting one application with emails about several unrelated jobs
+// (confirmed against real data: one row ended up with a Data Analytics
+// internship reply, a JetBrains marketing email, two Gruve reminders, and a
+// tech newsletter misclassified as an interview invite, all merged
+// together). Listed here rather than in ATS_DOMAINS because ATS_DOMAINS
+// also suppresses recruiterName (isAts) — LinkedIn InMail often does have a
+// real, named recruiter as the sender, which should still be captured.
+const GENERIC_EMAIL_DOMAINS = [
+  "gmail.com",
+  "outlook.com",
+  "yahoo.com",
+  "hotmail.com",
+  "icloud.com",
+  "aol.com",
+  "linkedin.com",
+];
 
 // The ATS platform's own name leaking through as "the company" (e.g. a
 // SuccessFactors-hosted customer's system account is literally named

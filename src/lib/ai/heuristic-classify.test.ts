@@ -332,5 +332,26 @@ describe("classifyEmailHeuristically", () => {
       );
       expect(result.company).not.toBe("Recruitee-email");
     });
+
+    it("does not use linkedin.com as the company for a LinkedIn-relayed email", () => {
+      // Real observed bug: LinkedIn job alerts, InMail, and notifications
+      // all come from linkedin.com regardless of which actual company
+      // they're about. Domain-based extraction treated it like a real
+      // employer's domain, so every LinkedIn-relayed email got company:
+      // "Linkedin" — and since most don't state a specific position either,
+      // findMatchingApplication's company-only fallback merged them all
+      // into the same application, corrupting it with emails about several
+      // unrelated jobs (confirmed against real data).
+      const result = classifyEmailHeuristically(
+        email({
+          subject: "Thank you for your application via Linkedin!",
+          fromEmail: "inmail-hit-reply@linkedin.com",
+          fromName: "Raluca Moise",
+          bodyText:
+            "Dear Atqa, Thank you for applying to our role via Linkedin! Please be so kind to apply via Careers in Terma if you haven't done so.",
+        })
+      );
+      expect(result.company).not.toBe("Linkedin");
+    });
   });
 });

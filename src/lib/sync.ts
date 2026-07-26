@@ -397,6 +397,13 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
       }
     }
 
+    // Gmail's resultSizeEstimate (used to seed emailsScanned above) can
+    // undercount, especially for a query this broad — tracked separately so
+    // the denominator can only ever grow to match reality (never shrink
+    // back to the original estimate), preventing emailsProcessed from ever
+    // visibly exceeding emailsScanned once real counts overtake the guess.
+    let actualFound = 0;
+
     windowLoop: for (const window of windows) {
       if (await checkCancelled()) break;
 
@@ -407,12 +414,15 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
       // out a lot of noise regardless of what the user's custom query says.
       const windowQuery = `${settings.gmailQuery} after:${afterEpoch} before:${beforeEpoch} category:primary`;
 
-      // The progress bar's total comes from the upfront estimate above, not
-      // from accumulating each window's count — checkCancelled here still
-      // lets a large window's pagination be interrupted mid-listing.
       const windowMessageIds = await listMessageIds(userId, windowQuery, undefined, checkCancelled);
 
       if (cancelled) break;
+
+      actualFound += windowMessageIds.length;
+      if (actualFound > summary.emailsScanned) {
+        summary.emailsScanned = actualFound;
+        await prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: summary.emailsScanned } });
+      }
 
       const existing = await prisma.emailRecord.findMany({
         where: { gmailMessageId: { in: windowMessageIds.map((m) => m.id) } },
