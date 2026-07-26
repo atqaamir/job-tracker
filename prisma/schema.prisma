@@ -178,6 +178,11 @@ model SyncLog {
   // Set by POST /api/sync/cancel; the running sync's loop polls this and
   // stops early, marking itself "cancelled" instead of "completed".
   cancelRequested     Boolean   @default(false)
+  // Bumped on every progress update while a sync is running (see
+  // src/lib/sync.ts). Lets /api/sync/status detect a "running" row whose
+  // job actually died (crash, server restart, serverless timeout) without
+  // ever reaching a terminal status — see STALE_RUNNING_MS there.
+  updatedAt           DateTime  @updatedAt
 
   emailsScanned       Int       @default(0)
   emailsProcessed     Int       @default(0)

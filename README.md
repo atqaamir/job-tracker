@@ -91,28 +91,6 @@ npx prisma studio            # browse the database
 npx prisma migrate dev        # create a new migration after changing schema.prisma
 ```
 
-## Project Structure
-
-```
-prisma/schema.prisma          Database schema (Prisma 7, driver adapters)
-prisma/migrations/             Versioned SQL migrations
-prisma/seed.ts                  Sample-data seed script (npm run db:seed)
-src/lib/gmail.ts                 Gmail API client (list/fetch/parse messages, token refresh)
-src/lib/ai/classify.ts            Dispatches to Claude (if configured) or the free classifier
-src/lib/ai/heuristic-classify.ts   Free, offline, rule-based email classifier (no API key needed)
-src/lib/sync.ts                     Core sync engine: Gmail -> classify -> merge into applications, cancellable
-src/lib/clear-fetched-data.ts        Wipes a user's applications/emails/sync history (Fetch All Again, delete-all)
-src/lib/stats.ts                      Dashboard aggregate stats + shared dashboard-filter predicate
-src/lib/ai-status.ts                   Whether AI classification is currently usable for a user
-src/lib/ai-sync-prefs.ts                Per-browser localStorage prefs for the AI-timeframe confirmation
-src/lib/crypto.ts                        AES-256-GCM helpers for encrypting OAuth tokens and API keys
-src/lib/prisma.ts                         Prisma client + the token-encryption extension
-src/app/api/sync/                          Sync (POST), status polling (GET), and cancel (POST) routes
-src/app/api/                                Route handlers (applications, settings, stats, notifications, cron)
-src/app/dashboard/                           Dashboard, applications table, and settings pages
-src/components/                               UI components
-```
-
 ## How the Gmail Sync Works
 
 1. `POST /api/sync` creates a `SyncLog` row and immediately returns its ID; the actual work continues server-side via `after()`, detached from the request — closing the tab or navigating away doesn't stop it. The client polls `GET /api/sync/status` to show a live progress bar and can call `POST /api/sync/cancel` to request an early stop.
@@ -232,3 +210,25 @@ click-by-click guide to deploying on Vercel + Supabase, including Google OAuth
 and Gmail API setup.
 
 See **[PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md)** before going live.
+
+## Project Structure
+
+```
+prisma/schema.prisma          Database schema (Prisma 7, driver adapters)
+prisma/migrations/             Versioned SQL migrations
+prisma/seed.ts                  Sample-data seed script (npm run db:seed)
+src/lib/gmail.ts                 Gmail API client (list/fetch/parse messages, token refresh)
+src/lib/ai/classify.ts            Dispatches to Claude (if configured) or the free classifier
+src/lib/ai/heuristic-classify.ts   Free, offline, rule-based email classifier (no API key needed)
+src/lib/sync.ts                     Core sync engine: Gmail -> classify -> merge into applications, cancellable
+src/lib/clear-fetched-data.ts        Wipes a user's applications/emails/sync history (Fetch All Again, delete-all)
+src/lib/stats.ts                      Dashboard aggregate stats + shared dashboard-filter predicate
+src/lib/ai-status.ts                   Whether AI classification is currently usable for a user
+src/lib/ai-sync-prefs.ts                Per-browser localStorage prefs for the AI-timeframe confirmation
+src/lib/crypto.ts                        AES-256-GCM helpers for encrypting OAuth tokens and API keys
+src/lib/prisma.ts                         Prisma client + the token-encryption extension
+src/app/api/sync/                          Sync (POST), status polling (GET), and cancel (POST) routes
+src/app/api/                                Route handlers (applications, settings, stats, notifications, cron)
+src/app/dashboard/                           Dashboard, applications table, and settings pages
+src/components/                               UI components
+```

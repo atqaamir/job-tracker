@@ -76,12 +76,16 @@ export interface GmailMessageSummary {
  * message is returned. A large backfill can take dozens of sequential pages
  * (100 messages each) before this resolves, so `onPage` lets the caller
  * report growing progress instead of leaving the UI showing nothing until
- * the entire list is done.
+ * the entire list is done. `shouldStop`, if given, is checked after every
+ * page — a large backfill can spend a long time paginating before the
+ * per-message loop even starts, so cancellation needs a hook here too, not
+ * just in whatever processes the returned list.
  */
 export async function listMessageIds(
   userId: string,
   query: string,
-  onPage?: (scannedSoFar: number) => void
+  onPage?: (scannedSoFar: number) => void,
+  shouldStop?: () => boolean | Promise<boolean>
 ): Promise<GmailMessageSummary[]> {
   const gmail = await getGmailClient(userId);
   const results: GmailMessageSummary[] = [];
@@ -101,6 +105,7 @@ export async function listMessageIds(
     }
     pageToken = res.data.nextPageToken ?? undefined;
     onPage?.(results.length);
+    if (pageToken && shouldStop && (await shouldStop())) break;
   } while (pageToken);
 
   return results;

@@ -42,13 +42,18 @@ export async function GET(request: NextRequest) {
       ? (dashboardFilterParam as DashboardFilterKey)
       : null;
 
+    // Shared by the dashboard drill-down (dashboardFilter+sinceDays together)
+    // and the Applications page's own standalone time-range filter (just
+    // sinceDays, no dashboardFilter) — either way it means "only
+    // applications applied within the last N days."
+    const since =
+      sinceDaysParam && Number.isFinite(Number(sinceDaysParam))
+        ? new Date(Date.now() - Number(sinceDaysParam) * 86_400_000)
+        : undefined;
+
     const where: Prisma.JobApplicationWhereInput = dashboardFilter
-      ? dashboardFilterWhere(
-          userId,
-          dashboardFilter,
-          sinceDaysParam ? new Date(Date.now() - Number(sinceDaysParam) * 86_400_000) : undefined
-        )
-      : { userId, isArchived: archived };
+      ? dashboardFilterWhere(userId, dashboardFilter, since)
+      : { userId, isArchived: archived, ...(since ? { dateApplied: { gte: since } } : {}) };
 
     if (!dashboardFilter && status) {
       where.status = status as Prisma.JobApplicationWhereInput["status"];

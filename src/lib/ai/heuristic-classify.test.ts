@@ -208,6 +208,42 @@ describe("classifyEmailHeuristically", () => {
       expect(result.category).not.toBe("INTERVIEW_FOLLOWUP");
     });
 
+    it("does not classify a product-update newsletter's incidental 'job offer' phrasing as an offer", () => {
+      // Real observed bug: a bare "job offer" match fired on generic
+      // marketing copy ("getting you to a job offer faster") in a bulk
+      // product-changelog email, not an actual offer to the user.
+      const result = classifyEmailHeuristically(
+        email({
+          subject: "Here's what's new since June",
+          fromEmail: "hello@mail.aiapply.co",
+          fromName: "Product @ AIApply",
+          bodyText:
+            "Big month of June at AIApply, with over 2,300 users landing a job! We want to update you regularly on what the team has been building, because every single thing below exists for one reason: getting you to a job offer faster. " +
+            "You are receiving this email because you opted in to receive updates from AiApply. Unsubscribe",
+        })
+      );
+      expect(result.category).toBe("OTHER");
+      expect(result.isJobRelated).toBe(false);
+    });
+
+    it("does not treat a job-recommendation digest as job-application-related", () => {
+      // Job-alert/recommendation emails ("5 new jobs matching your search")
+      // describe listings the user hasn't applied to yet — they're
+      // discovery content from a job board, not an update on an actual
+      // application, and shouldn't create or touch any application record.
+      const result = classifyEmailHeuristically(
+        email({
+          subject: "5 new jobs matching your search: Data Scientist",
+          fromEmail: "jobalerts-noreply@linkedin.com",
+          fromName: "LinkedIn Job Alerts",
+          bodyText:
+            "New jobs matching your search are here. Check out these jobs you may be interested in based on your profile and search history.",
+        })
+      );
+      expect(result.category).toBe("OTHER");
+      expect(result.isJobRelated).toBe(false);
+    });
+
     it("does not use a short system-account-shaped from-name as the company", () => {
       // Uses an ATS domain so domain-based extraction is skipped and this
       // actually exercises the from-name fallback.

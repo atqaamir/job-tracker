@@ -30,6 +30,17 @@ const DASHBOARD_FILTER_LABELS: Record<string, string> = {
   rejections: "Rejections",
 };
 
+// Same buckets as the dashboard's own range selector, plus "All time" since
+// unlike the dashboard, this table defaults to showing everything.
+const RANGE_OPTIONS = [
+  { value: "all", label: "All time" },
+  { value: "0", label: "Today" },
+  { value: "14", label: "Last 2 weeks" },
+  { value: "90", label: "Last 3 months" },
+  { value: "180", label: "Last 6 months" },
+  { value: "365", label: "Last 12 months" },
+];
+
 export function ApplicationsTable() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -39,6 +50,7 @@ export function ApplicationsTable() {
   const [search, setSearch] = React.useState("");
   const [status, setStatus] = React.useState<string>("all");
   const [furthestStage, setFurthestStage] = React.useState<string>("all");
+  const [range, setRange] = React.useState<string>("all");
   const [archived, setArchived] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [sortBy, setSortBy] = React.useState("dateApplied");
@@ -83,6 +95,7 @@ export function ApplicationsTable() {
     } else {
       if (status !== "all") params.set("status", status);
       if (furthestStage !== "all") params.set("furthestStage", furthestStage);
+      if (range !== "all") params.set("sinceDays", range);
     }
 
     try {
@@ -93,7 +106,7 @@ export function ApplicationsTable() {
     } finally {
       setLoading(false);
     }
-  }, [page, sortBy, sortDir, archived, search, status, furthestStage, dashboardFilter, sinceDays]);
+  }, [page, sortBy, sortDir, archived, search, status, furthestStage, range, dashboardFilter, sinceDays]);
 
   React.useEffect(() => {
     const timeout = setTimeout(load, 250);
@@ -202,6 +215,25 @@ export function ApplicationsTable() {
               {PROGRESS_STAGE_VALUES.map((s) => (
                 <SelectItem key={s} value={s}>
                   Reached: {STATUS_LABELS[s]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={range}
+            onValueChange={(v) => {
+              setPage(1);
+              setRange(v);
+            }}
+            disabled={Boolean(dashboardFilter)}
+          >
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {RANGE_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
                 </SelectItem>
               ))}
             </SelectContent>

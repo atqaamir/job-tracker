@@ -13,8 +13,12 @@ type Category = (typeof EMAIL_CATEGORIES)[number];
 const CATEGORY_PATTERNS: { category: Category; pattern: RegExp }[] = [
   {
     category: "OFFER",
+    // A bare "job offer" used to qualify, but that phrase shows up in
+    // generic career-advice/product-marketing copy too ("getting you to a
+    // job offer faster") — narrowed to require it read as *your* specific
+    // offer, not the general concept of one.
     pattern:
-      /\b(pleased to offer|job offer|offer of employment|extend(?:ing)? (?:you |an )?offer|offer letter|excited to offer)\b/i,
+      /\b(pleased to offer|your job offer|the job offer|offer of employment|extend(?:ing)? (?:you |an )?offer|offer letter|excited to offer)\b/i,
   },
   {
     category: "REJECTION",
@@ -111,7 +115,28 @@ const STATUS_BY_CATEGORY: Partial<Record<Category, EmailClassification["suggeste
   REJECTION: "REJECTED",
 };
 
+// Standard bulk-mailer subscription footer ("You are receiving this email
+// because you opted in to receive updates") — a reliable signal this is a
+// marketing/product-update newsletter (job-search tool changelogs, career
+// blogs, etc.), not a personal email about an actual application. These
+// emails routinely contain incidental phrasing that would otherwise trip
+// category keywords (e.g. "getting you to a job offer faster"), so this is
+// checked before any category pattern rather than trying to patch each
+// keyword one misfire at a time.
+const MARKETING_FOOTER_PATTERN =
+  /\byou (?:are|were) receiving this (?:email|message) because you (?:opted in|subscribed|signed up)\b/i;
+
+// Automated job-recommendation/alert digests ("5 new jobs match your
+// search", "Jobs you may be interested in") describe listings the user
+// hasn't applied to — they're job-board discovery content, not an update
+// about an actual application — so they're excluded the same way marketing
+// newsletters are, rather than risking a fake application getting created
+// from a recommended listing's company name.
+const JOB_DIGEST_PATTERN =
+  /\b(jobs? you may be interested in|new jobs? (?:match|matching|posted|available)|jobs? recommended for you|jobs? matching your (?:search|profile|preferences)|\bjob alert\b)\b/i;
+
 function detectCategory(text: string): Category {
+  if (MARKETING_FOOTER_PATTERN.test(text) || JOB_DIGEST_PATTERN.test(text)) return "OTHER";
   for (const { category, pattern } of CATEGORY_PATTERNS) {
     if (pattern.test(text)) return category;
   }

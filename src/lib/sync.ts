@@ -176,34 +176,50 @@ export async function runSync(userId: string, options: RunSyncOptions = {}): Pro
     const baseAiConfig: AIConfig | null = settings.aiEnabled && apiKey ? { apiKey, model: settings.aiModel } : null;
     const recentCutoff = new Date(Date.now() - aiRecentDays * 86_400_000);
 
-    // A big backfill can take dozens of sequential Gmail list-pages before
-    // this resolves — report the running count after each page so the
-    // client's progress bar visibly grows during listing instead of sitting
-    // on "starting…" the whole time, then jumping straight to a fixed total.
-    const messageIds = await listMessageIds(userId, query, (scannedSoFar) => {
-      void prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: scannedSoFar } });
-    });
-    summary.emailsScanned = messageIds.length;
-    await prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: summary.emailsScanned } });
-
-    const existing = await prisma.emailRecord.findMany({
-      where: { gmailMessageId: { in: messageIds.map((m) => m.id) } },
-      select: { gmailMessageId: true },
-    });
-    const existingIds = new Set(existing.map((e) => e.gmailMessageId));
-    const toProcess = messageIds.filter((m) => !existingIds.has(m.id));
-
     let cancelled = false;
-    for (const { id: messageId, threadId } of toProcess) {
-      // Cheap poll relative to the Gmail fetch + classification call this
-      // iteration is about to make. Checked once per message so a cancel
-      // request (POST /api/sync/cancel) takes effect within one message.
+    const checkCancelled = async () => {
       const current = await prisma.syncLog.findUnique({
         where: { id: syncLog.id },
         select: { cancelRequested: true },
       });
-      if (current?.cancelRequested) {
-        cancelled = true;
+      if (current?.cancelRequested) cancelled = true;
+      return cancelled;
+    };
+
+    // A big backfill can take dozens of sequential Gmail list-pages before
+    // this resolves — report the running count after each page so the
+    // client's progress bar visibly grows during listing instead of sitting
+    // on "starting…" the whole time, then jumping straight to a fixed total.
+    // Cancellation is checked here too (not just in the per-message loop
+    // below), since a large backfill can spend a long time just paginating
+    // before that loop ever starts.
+    const messageIds = await listMessageIds(
+      userId,
+      query,
+      (scannedSoFar) => {
+        void prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: scannedSoFar } });
+      },
+      checkCancelled
+    );
+    summary.emailsScanned = messageIds.length;
+    await prisma.syncLog.update({ where: { id: syncLog.id }, data: { emailsScanned: summary.emailsScanned } });
+
+    const toProcess = cancelled
+      ? []
+      : await (async () => {
+          const existing = await prisma.emailRecord.findMany({
+            where: { gmailMessageId: { in: messageIds.map((m) => m.id) } },
+            select: { gmailMessageId: true },
+          });
+          const existingIds = new Set(existing.map((e) => e.gmailMessageId));
+          return messageIds.filter((m) => !existingIds.has(m.id));
+        })();
+
+    for (const { id: messageId, threadId } of toProcess) {
+      // Cheap poll relative to the Gmail fetch + classification call this
+      // iteration is about to make. Checked once per message so a cancel
+      // request (POST /api/sync/cancel) takes effect within one message.
+      if (await checkCancelled()) {
         break;
       }
       try {
